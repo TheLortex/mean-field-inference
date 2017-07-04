@@ -120,11 +120,13 @@ class MultiModalMeanField():
         self._modes_probabilities = tf.nn.softmax(self._energy)
         self._q_mf = tf.nn.softmax(-self._theta_mf)
         self._modes = [self._mf.theta_clip_nothing()]
+        self._modesT = [0]
 
     def reset_all(self, initial_modes=None):
         if initial_modes is None:
             initial_modes = [self._mf.theta_clip_nothing()]
         self._modes = initial_modes
+        self._modesT = [0]
 
     def find_phase_transition(self, sess, T):
         while True:
@@ -135,11 +137,11 @@ class MultiModalMeanField():
             q = sess.run(self._q_mf, feed_dict=parameters)
             entropy = -np.sum(q*np.log2(q+0.0000001), axis=3)
             if np.max(entropy) > 0.7 or T >= 0.1*(2**8): #8 iterations max
-                return q, entropy 
+                return q, entropy, T
             T *= 2
 
     def iteration(self, session):
-        q, entropy = self.find_phase_transition(session, 1)
+        q, entropy, T = self.find_phase_transition(session, 1/15.)
         idx = np.argmax(entropy)
         print(q.shape, entropy.shape, idx)
         m,x,y = np.unravel_index(idx, entropy.shape)
@@ -149,6 +151,9 @@ class MultiModalMeanField():
 
         if q[m,x,y,k] > 0.9: # TODO: threshold parameter
             return False, q[m,x,y,k]
+
+        self._modesT[m] = T
+        self._modesT.append(T)
 
         cur_mode        = self._modes[m]
         new_mode        = cur_mode.copy()
@@ -189,6 +194,8 @@ class BatchedMultiModalMeanField():
         self._modes = np.array([[self._mf.theta_clip_nothing()] for _ in range(bs)])
         self._nmodes = 1
         self._bs = bs
+        self._n = n
+        self._p = p
 
     # provide a batched mode list
     def reset_all(self, initial_modes=None):
@@ -200,10 +207,10 @@ class BatchedMultiModalMeanField():
     def find_phase_transition(self, sess, T):
         while True:
             parameters = {
-                            self._theta_clip: np.reshape(self._modes,(self._nmode*self._bs,2,n,n,p)),
+                            self._theta_clip: np.reshape(self._modes,(self._nmodes*self._bs,2,self._n,self._n,self._p)),
                             self._T: T
                          }
-            q = np.reshape(sess.run(self._q_mf, feed_dict=parameters),(self._bs,self._nmode,n,n,p))
+            q = np.reshape(sess.run(self._q_mf, feed_dict=parameters),(self._bs,self._nmodes,self._n,self._n,self._p))
             entropy = -np.sum(q*np.log2(q+0.0000001), axis=4)
             return q,entropy
             # todo: fix it
@@ -213,14 +220,14 @@ class BatchedMultiModalMeanField():
 
     def iteration(self, session):
         q, entropy = self.find_phase_transition(session, 1)
-        newmodes = np.zeros((self._bs,1,n,n,p))
+        newmodes = np.zeros((self._bs,1,2,self._n,self._n,self._p))
         for i in range(self._bs):
             idx = np.argmax(entropy[i])
-            print(q[i].shape, entropy[i].shape, idx)
+            #print(q[i].shape, entropy[i].shape, idx)
             m,x,y = np.unravel_index(idx, entropy[i].shape)
             k = np.argmax(q[i,m,x,y])
-            print(self._modes[i,m,:,x,y])
-            print(i,m,x,y,k,q[i,m,x,y,k])
+            #print(self._modes[i,m,:,x,y])
+            #print(i,m,x,y,k,q[i,m,x,y,k])
 
             cur_mode        = self._modes[i,m]
             new_mode        = cur_mode.copy()
@@ -232,7 +239,7 @@ class BatchedMultiModalMeanField():
             new_mode[1,x,y,k] =  50
 
             newmodes[i,0] = new_mode
-        self._modes = np.concatenate(self._modes, newmodes, axis=1)
+        self._modes = np.concatenate((self._modes, newmodes), axis=1)
         self._nmodes += 1
 
     def get_modes(self):

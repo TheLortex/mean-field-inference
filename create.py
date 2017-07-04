@@ -140,7 +140,8 @@ def pluck(puzzle, nKeep=0):
         # group to deduce this value.) If all three groups are True, then we cannot pluck
         # this cell and must try another one.
         row = col = square = False
-        
+        unique = False
+
         for i in range(Nsq):
             if i != cell//Nsq:
                 if canBeA(puzzle, i, cell%Nsq, cell): row = True
@@ -150,12 +151,15 @@ def pluck(puzzle, nKeep=0):
                 if canBeA(puzzle, ((cell//Nsq)//N)*N + i//N,
                           ((cell//Nsq)%N)*N + i%N, cell): square = True
 
-        if row and col and square:
+        if row and col and square and unique:
             continue # could not pluck this cell, try again.
         else:
             # this is a pluckable cell!
             puzzle[cell//Nsq][cell%Nsq] = 0 # 0 denotes a blank cell
             cells.discard(cell) # remove from the set of visible cells (pluck it)
+            if row and col and square:
+                break
+            
             # we don't need to reset "cellsleft" because if a cell was not pluckable
             # earlier, then it will still not be pluckable now (with less information
             # on the board).

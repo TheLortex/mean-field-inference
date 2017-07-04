@@ -2,12 +2,22 @@ import numpy as np
 import tensorflow as tf
 import mf 
 import pickle
-
+import sys
 np.set_printoptions(precision=3,suppress=True)
 
 
 pad_zeros = True
 zero_val = True
+
+batch_size = 50
+n_epoch = 500
+learning_rate = 0.05
+n_modes = 0
+
+with open(sys.argv[1],'rb') as f:
+    dataset_X, dataset_Y = pickle.load(f)
+
+n_samples,_,_,_ = dataset_X.shape
 
 g = 3
 n = g**2
@@ -17,6 +27,21 @@ if zero_val or pad_zeros:
     p += 1
 if pad_zeros:
     n *= 2
+
+
+weights_np = np.zeros((n,n,p,p),dtype=np.float32)
+unary_np = np.zeros((n,n,p),dtype=np.float32)
+
+if len(sys.argv) >= 4:
+    with open(sys.argv[3],'rb') as f:
+        weights_np, unary_np = pickle.load(f)
+        print("Loaded from file")
+        print(weights_np)
+        print(unary_np)
+        print("Loaded from file")
+        assert weights_np.shape == (n,n,p,p)
+        assert unary_np.shape == (n,n,p)
+
 
 m = mf.MeanField(n, n, p)
 
@@ -41,11 +66,10 @@ def grid_to_clip(grid):
                         res[s,1,x,y,k] = -50
     return res
 
-with open('dataset_9x9.pkl','rb') as f:
+with open(sys.argv[1],'rb') as f:
     dataset_X, dataset_Y = pickle.load(f)
 #n_samples,_,_,_ = dataset_Y.shape
 
-batch_size = 50
 
 if pad_zeros:
     inputs = grid_to_clip(expand(dataset_X))
@@ -60,9 +84,9 @@ else:
 print(dataset_X.shape)
 
 tf_samples = tf.placeholder(tf.float32,[None, n, n, p])
-links = tf.Variable(tf.zeros([n,n,p,p]))
+links = tf.Variable(tf.convert_to_tensor(weights_np))
 links_sym = links+tf.transpose(links, [0, 1, 3, 2]) # pairwise weights are symmetric
-unary = tf.Variable(tf.zeros([n,n,p]))
+unary = tf.Variable(tf.convert_to_tensor(unary_np))
 mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary)
 
 q_mf = mmmf.get_q_mf_values() # for each sample, each mode, q values.
@@ -94,9 +118,8 @@ gradient_total = tf.gradients(to_maximize, [links, unary])
 c = m.weights_clip_nothing()
 gradient_total[0] = tf.clip_by_value(gradient_total[0], c[0], c[1])
 
-n_samples = 10000
 
-update_rate = 0.05*batch_size/float(n_samples)
+update_rate = learning_rate*batch_size/float(n_samples)
 
 update_weights = tf.assign(links, tf.check_numerics(links + update_rate*gradient_total[0],"weights"))
 update_unary = tf.assign(unary, tf.check_numerics(unary + update_rate*gradient_total[1],"unary"))
@@ -108,20 +131,18 @@ sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())
 
 
-for i in range(40):
+for i in range(n_epoch):
     print("##############",i,"##############")
     for b in range(n_samples/batch_size):
-        if b%100 == 0:
+        if b%10 == 0:
             print(b)
-        mmmf.reset_all(inputs[b*batch_size:(b+1)*batch_size])
-        for _ in range(0): # only one solution each.
-            ok, maxq = mmmf.iteration(sess)
-            print(maxq)
-            if not ok:
-                break
+        #print(np.expand_dims(np.array(inputs[b*batch_size:(b+1)*batch_size]),axis=1).shape)
+        mmmf.reset_all(np.expand_dims(np.array(inputs[b*batch_size:(b+1)*batch_size]),axis=1))
+        for _ in range(n_modes): 
+            mmmf.iteration(sess)
 
         parameters = {
-                    mmmf._theta_clip: mmmf._modes,
+                    mmmf._theta_clip: np.reshape(mmmf._modes,(-1,2,n,n,p)),
                     mmmf._T: 1,
                     tf_samples: labels[b*batch_size:(b+1)*batch_size]
                 }
@@ -135,7 +156,7 @@ for i in range(40):
 #        print(u)
 
         
-    with open('latest5_sym_9x9_batch_{}.pkl'.format(i),'wb') as f:
+    with open('{}_{}.pkl'.format(sys.argv[2],i),'wb') as f:
         pickle.dump(sess.run([links, unary]), f)
 
 print(sess.run(links))
