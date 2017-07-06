@@ -41,6 +41,7 @@ def reduce_matrix(graph,g,p):
 
 
 def expand_matrix(dataset,g,p):
+    dataset = np.array(dataset)
     n_samples,_,_,_ = dataset.shape
     target = np.zeros((n_samples,2*(g**2),2*(g**2),p))
     target[:,:,0] = 1

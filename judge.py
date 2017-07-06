@@ -11,7 +11,7 @@ with open(sys.argv[1],'rb') as f:
     dataset_X, dataset_Y = pickle.load(f)
 
 with open(sys.argv[2],'rb') as f:
-    w, u = pickle.load(f)
+    w, u, a = pickle.load(f)
 
 g = 3
 n = 2*(g**2)
@@ -27,7 +27,7 @@ links = tf.Variable(tf.convert_to_tensor(w))
 links_sym = links+tf.transpose(links, [0, 1, 3, 2])
 unary = tf.Variable(tf.convert_to_tensor(u))
 
-mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary)
+mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary, a, a.shape[0])
 q_mf = mmmf.get_q_mf_values()
 
 

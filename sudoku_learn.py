@@ -9,6 +9,7 @@ np.set_printoptions(precision=3,suppress=True)
 pad_zeros = True
 zero_val = True
 
+meanfield_iters = 150
 batch_size = 50
 n_epoch = 500
 learning_rate = 0.05
@@ -83,11 +84,14 @@ else:
 
 print(dataset_X.shape)
 
+
 tf_samples = tf.placeholder(tf.float32,[None, n, n, p])
 links = tf.Variable(tf.convert_to_tensor(weights_np))
 links_sym = links+tf.transpose(links, [0, 1, 3, 2]) # pairwise weights are symmetric
 unary = tf.Variable(tf.convert_to_tensor(unary_np))
-mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary)
+annealing = tf.Variable(tf.ones([meanfield_iters]))
+
+mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary, annealing, meanfield_iters)
 
 q_mf = mmmf.get_q_mf_values() # for each sample, each mode, q values.
 # tf_sample: (s, n, n, p)
@@ -114,17 +118,18 @@ energy_sample_mode = tf.gather(tf.transpose(energies), sample_mode)
 
 to_maximize = tf.reduce_mean(log_lh - energy_sample_mode + mean_energy)
 
-gradient_total = tf.gradients(to_maximize, [links, unary])
+gradient_total = tf.gradients(to_maximize, [links, unary, annealing])
 c = m.weights_clip_nothing()
 gradient_total[0] = tf.clip_by_value(gradient_total[0], c[0], c[1])
 
 
 update_rate = learning_rate*batch_size/float(n_samples)
 
-update_weights = tf.assign(links, tf.check_numerics(links + update_rate*gradient_total[0],"weights"))
-update_unary = tf.assign(unary, tf.check_numerics(unary + update_rate*gradient_total[1],"unary"))
+update_weights = tf.assign(links, tf.check_numerics(links + update_rate*gradient_total[0],"weights_upd"))
+update_unary = tf.assign(unary, tf.check_numerics(unary + update_rate*gradient_total[1],"unary_upt"))
+update_annealing = tf.assign(annealing, tf.check_numerics(annealing + update_rate*gradient_total[2],"annealing_upd"))
 
-config = tf.ConfigProto(log_device_placement=True)
+config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 
 sess = tf.Session(config=config)
@@ -146,7 +151,7 @@ for i in range(n_epoch):
                     mmmf._T: 1,
                     tf_samples: labels[b*batch_size:(b+1)*batch_size]
                 }
-        aa,a,b,c,tm,g_w,s,w,u = sess.run([prod, log_lh, energy_sample_mode, mean_energy, to_maximize, gradient_total,sample_mode, update_weights, update_unary], feed_dict=parameters)
+        aa,a,b,c,tm,g_w,s,w,u,a = sess.run([prod, log_lh, energy_sample_mode, mean_energy, to_maximize, gradient_total,sample_mode, update_weights, update_unary, update_annealing], feed_dict=parameters)
     #print(aa[0])
     #print(g_w[0])
     #print(g_w[1])
@@ -157,10 +162,10 @@ for i in range(n_epoch):
 
         
     with open('{}_{}.pkl'.format(sys.argv[2],i),'wb') as f:
-        pickle.dump(sess.run([links, unary]), f)
+        pickle.dump(sess.run([links, unary, annealing]), f)
 
 print(sess.run(links))
-mmmf = mf.MultiModalMeanField(n,n,p,links_sym,unary)
+mmmf = mf.MultiModalMeanField(n,n,p,links_sym,unary,annealing,meanfield_iters)
 mmmf.iteration(sess)
 parameters = {mmmf._theta_clip: np.array(mmmf._modes),
                 mmmf._T: 1}

@@ -15,27 +15,29 @@ class MeanField():
         self._n     = n
         self._m     = m
         self._p     = p
-        self._theta_clip = tf.placeholder(tf.float32, shape=[None, 2, n, m, p], name="theta_clip")
-        print(tf.shape(self._theta_clip[:,0,:,:,:],name="theta_shape"))
-        self._theta = tf.random_normal(tf.shape(self._theta_clip[:,0,:,:,:], name="theta_shape"), stddev=theta_std, name="initial_theta")
+        with tf.name_scope('theta'):
+            self._theta_clip = tf.placeholder(tf.float32, shape=[None, 2, n, m, p], name="theta_clip")
+            self._theta = tf.random_normal(tf.shape(self._theta_clip[:,0,:,:,:], name="theta_shape"), stddev=theta_std, name="initial_theta")
 
     # image shape (bs, n, m, p) | filter shape (n, m, p, p)
     # outputs convolution of shape (bs, n, m, p)
     def __compute_circular_convolution (self, image, filtr):
-        image_1 = tf.concat(2*[image], axis=1)
-        image_2 = tf.concat(2*[image_1], axis=2) # shape (bs, 2*n, 2*m, p)
-        image_3 = tf.slice(image_2, 
+        with tf.name_scope('convolution'):
+            image_1 = tf.concat(2*[image], axis=1)
+            image_2 = tf.concat(2*[image_1], axis=2) # shape (bs, 2*n, 2*m, p)
+            image_3 = tf.slice(image_2, 
                         [0, 0, 0, 0], 
                         [-1, 2*self._n-1, 2*self._m-1,-1])
-        strides = [1, 1, 1, 1]
-        padding = "VALID"
-        return tf.nn.conv2d(image_3, filtr, strides, padding)
+            strides = [1, 1, 1, 1]
+            padding = "VALID"
+            return tf.nn.conv2d(image_3, filtr, strides, padding)
 
     # takes theta of shape (bs, n, m, p)
     def __compute_theta_star(self, links, unary, theta):
-        q = tf.nn.softmax(-theta)
-        E = self.__compute_circular_convolution(q, links)
-        return E + unary
+        with tf.name_scope('theta_star'):
+            q = tf.nn.softmax(-theta)
+            E = self.__compute_circular_convolution(q, links)
+            return E + unary
 
     def __update_rule(self, links, unary, theta, d):
         assert (0 < d < 1)
@@ -68,6 +70,7 @@ class MeanField():
         self._weights = weights
         self._unary = unary
         theta = self._theta
+
         with tf.name_scope('mf_loop') as scope:
             for i in range(n_iter):
                 new_theta = self.__update_rule(weights[i], unary[i], theta, damping)
@@ -76,12 +79,13 @@ class MeanField():
                             self._theta_clip[:,0],
                             self._theta_clip[:,1])
             self._theta_mf = theta
+            q = tf.nn.softmax(-self._theta_mf)
+            tf.summary.histogram('q',q)
+            with tf.name_scope('energy'):
+                E = self.__compute_circular_convolution(q, self._weights[0])
+                self._energy = tf.reduce_sum((E+self._unary[0])*q,axis=(1,2,3)) 
+                tf.summary.histogram('energy',self._energy)        
 
-        # Energy computation at the end of MF-inference. 
-        q = tf.nn.softmax(-self._theta_mf)
-        E = self.__compute_circular_convolution(q, self._weights[0])
-        self._energy = tf.reduce_sum((E+self._unary[0])*q,axis=(1,2,3)) 
-        
         return self._theta_mf, self._energy, self._theta_clip
 
     def get_energy (self):
@@ -110,9 +114,12 @@ class MeanField():
 
 
 class MultiModalMeanField():
-    def __init__(self, n, m, p, links, unary, n_iter=50, damping=0.5):
-        self._links     = tf.stack(n_iter*[links])
-        self._unary     = tf.stack(n_iter*[unary])
+    def __init__(self, n, m, p, links, unary, annealing, n_iter, damping=0.5):
+        for _ in range(4):
+            annealing = tf.expand_dims(annealing)
+        annealing = tf.tile(annealing, [1, n, m, p, p])
+        self._links     = tf.stack(n_iter*[links])*annealing
+        self._unary     = tf.stack(n_iter*[unary])*annealing
         self._T         = tf.placeholder(tf.float32,name="Temperature")
 
         self._mf = MeanField(n, m, p)
@@ -129,28 +136,34 @@ class MultiModalMeanField():
         self._modesT = [0]
 
     def find_phase_transition(self, sess, T):
+        parameters = {
+                        self._theta_clip: np.array(self._modes),
+                        self._T: T
+                    }
+        q = sess.run(self._q_mf, feed_dict=parameters)
+        entropy0 = -np.sum(q*np.log2(q+0.0000001), axis=3)
+        zerosure = entropy0 < 0.3*np.log2(10) # TODO: 10 -> scale
         while True:
+            T *= 1.2
             parameters = {
                             self._theta_clip: np.array(self._modes),
                             self._T: T
                          }
             q = sess.run(self._q_mf, feed_dict=parameters)
             entropy = -np.sum(q*np.log2(q+0.0000001), axis=3)
-            if np.max(entropy) > 0.7 or T >= 0.1*(2**8): #8 iterations max
-                return q, entropy, T
-            T *= 2
+
+            chk = np.logical_and(entropy > 0.7*np.log2(10), zerosure)
+            if np.any(chk):
+                return q, chk, T
 
     def iteration(self, session):
-        q, entropy, T = self.find_phase_transition(session, 1/15.)
-        idx = np.argmax(entropy)
-        print(q.shape, entropy.shape, idx)
-        m,x,y = np.unravel_index(idx, entropy.shape)
+        q, chk, T = self.find_phase_transition(session, 1/10.)
+        
+        idx = np.argmax(chk)
+        m,x,y = np.unravel_index(idx, chk.shape)
         k = np.argmax(q[m,x,y])
-        print(self._modes[m][:,x,y])
-        print(m,x,y,k,q[m,x,y,k])
+        print(m,x,y,k,T,q[m,x,y])
 
-        if q[m,x,y,k] > 0.9: # TODO: threshold parameter
-            return False, q[m,x,y,k]
 
         self._modesT[m] = T
         self._modesT.append(T)
@@ -181,9 +194,12 @@ class MultiModalMeanField():
 
 
 class BatchedMultiModalMeanField():
-    def __init__(self, n, m, p, bs, links, unary, n_iter=50, damping=0.5):
-        self._links     = tf.stack(n_iter*[links])
-        self._unary     = tf.stack(n_iter*[unary])
+    def __init__(self, n, m, p, bs, links, unary, annealing, n_iter, damping=0.5):
+        
+        self._links     = tf.transpose(tf.stack(n_iter*[links],-1)*annealing, [4,0,1,2,3])
+        self._unary     = tf.transpose(tf.stack(n_iter*[unary],-1)*annealing, [3,0,1,2])
+        print(self._links.shape)
+        print(links.shape)
         self._T         = tf.placeholder(tf.float32,name="Temperature")
 
         self._mf = MeanField(n, m, p)
