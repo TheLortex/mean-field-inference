@@ -89,11 +89,11 @@ print(sudoku.infer_grid(sudoku.reduce_matrix(q_,g,p)))
 
 sess.close()
 
-n_modes = 30
-exit()
+n_modes = 11
 weights = tf.convert_to_tensor(w, dtype=tf.float32)
 unary = tf.convert_to_tensor(u, dtype=tf.float32)
-mmmf = mf.MultiModalMeanField(n,n,p,weights,unary,n_iter,damping=0.5)
+mmmf = mf.BatchedMultiModalMeanField(n,n,p,1,weights,unary,a,n_iter,damping=0.5)
+mmmf.reset_all(np.array([clip]))
 sess = tf.Session()
 for _ in range(n_modes):
     mmmf.iteration(sess)
@@ -103,13 +103,28 @@ q_values    = mmmf.get_q_mf_values()
 mode_probs  = mmmf.get_modes_energy()
 
 parameters = {
-                mmmf._theta_clip: np.array(mmmf._modes),
-                mmmf._T: 1/10.
+                mmmf._theta_clip: np.reshape(mmmf._modes,(-1,2,n,n,p)),
+                mmmf._T: 1/5.
              }
 q,prob = sess.run([q_values,mode_probs], feed_dict=parameters)
-pr,q_ = min(zip(prob,q))
+print(q.shape)
+print(prob.shape)
+ok = False
+pr,q_ = min(zip(prob[0],q))
+print(q_.shape)
 print(sudoku.infer_grid_probabilities(sudoku.reduce_matrix(q_,g,p)))
-print(sudoku.infer_grid(sudoku.reduce_matrix(q_,g,p)))
+grid = (sudoku.infer_grid(sudoku.reduce_matrix(q_,g,p)))
+print(grid)
 print(pr)
-print(mmmf._modesT)
+print(sudoku.is_correct(grid,g))
+nok = 0
+for q_,pr in zip(q,prob[0]):
+    grid = sudoku.infer_grid(sudoku.reduce_matrix(q_,g,p))
+    ok_ = sudoku.is_correct(grid,g)
+    if ok_:
+        print('ok:',pr)
+        print(grid)
+        nok += 1
+    ok = ok or ok_
+print(nok)
 sess.close()

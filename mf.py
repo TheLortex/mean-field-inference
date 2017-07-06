@@ -221,42 +221,71 @@ class BatchedMultiModalMeanField():
         self._nmodes = 1
 
     def find_phase_transition(self, sess, T):
+        n_modes_total = self._nmodes*self._bs
+        remaining = n_modes_total
+        results_q = np.zeros((self._n, self._n, self._p, self._bs, self._nmodes))
+        results_entropy = np.zeros((self._n, self._n, self._bs, self._nmodes))
+        unfinished = np.array([[True]*self._nmodes for _ in range(self._bs)])
+
+        parameters = {
+                        self._theta_clip: np.reshape(self._modes,(self._nmodes*self._bs,2,self._n,self._n,self._p)),
+                        self._T: T
+                     }
+        q = np.reshape(sess.run(self._q_mf, feed_dict=parameters),(self._bs,self._nmodes,self._n,self._n,self._p))
+        q = np.transpose(q, [2, 3, 4, 0, 1]) 
+        entropy0 = -np.sum(q*np.log2(q+0.0000001), axis=2) < 0.3*np.log2(10) # Initial entropy. 
+        assert (np.any(entropy0))
+
+        n_iter = 0
         while True:
+            if not(np.any(unfinished)):
+                return np.transpose(results_q, [3,4,0,1,2]), np.transpose(results_entropy, [2,3,0,1])
+
             parameters = {
                             self._theta_clip: np.reshape(self._modes,(self._nmodes*self._bs,2,self._n,self._n,self._p)),
                             self._T: T
                          }
             q = np.reshape(sess.run(self._q_mf, feed_dict=parameters),(self._bs,self._nmodes,self._n,self._n,self._p))
-            entropy = -np.sum(q*np.log2(q+0.0000001), axis=4)
-            return q,entropy
-            # todo: fix it
-            if np.max(entropy) > 0.7 or T >= 0.1*(2**8): #8 iterations max
-                return q, entropy 
-            T *= 2
+            q = np.transpose(q, [2, 3, 4, 0, 1]) #n,n,p,bs,nmodes
+
+            entropy = -np.sum(q*np.log2(q+0.0000001), axis=2) #n,n,bs,nmodes
+
+            phase_transition = np.logical_and(entropy > 0.7*np.log2(10), entropy0) # of shape n,n,bs,nmodes
+            has_phase_transition = np.any(phase_transition, axis=(0,1)) # of shape bs,nmodes
+            
+            should_update = np.logical_and(has_phase_transition, unfinished) # find modes who have their first phase transition
+            if np.sum(should_update) == 0:
+                n_iter += 1
+                if n_iter > 3:
+                    should_update = unfinished
+
+            unfinished = np.logical_xor(should_update, unfinished) # clear bits
+            results_q = np.where(should_update, q, results_q)
+            results_entropy = np.where(should_update, entropy, results_entropy)
+            T *= 1.2
+
 
     def iteration(self, session):
-        q, entropy = self.find_phase_transition(session, 1)
-        newmodes = np.zeros((self._bs,1,2,self._n,self._n,self._p))
+        q, entropy = self.find_phase_transition(session, 1/5.)
+        newmodes = np.zeros((self._bs,self._nmodes,2,self._n,self._n,self._p))
         for i in range(self._bs):
-            idx = np.argmax(entropy[i])
-            #print(q[i].shape, entropy[i].shape, idx)
-            m,x,y = np.unravel_index(idx, entropy[i].shape)
-            k = np.argmax(q[i,m,x,y])
-            #print(self._modes[i,m,:,x,y])
-            #print(i,m,x,y,k,q[i,m,x,y,k])
+            for j in range(self._nmodes):
+                idx = np.argmax(entropy[i,j])
+                x,y = np.unravel_index(idx, entropy[i,j].shape)
+                k = np.argmax(q[i,j,x,y])
 
-            cur_mode        = self._modes[i,m]
-            new_mode        = cur_mode.copy()
+                cur_mode        = self._modes[i,j]
+                new_mode        = cur_mode.copy()
 
-            cur_mode[0,x,y,k] = -50
-            cur_mode[1,x,y,k] = -50
+                cur_mode[0,x,y,k] = -50
+                cur_mode[1,x,y,k] = -50
 
-            new_mode[0,x,y,k] =  50
-            new_mode[1,x,y,k] =  50
+                new_mode[0,x,y,k] =  50
+                new_mode[1,x,y,k] =  50
 
-            newmodes[i,0] = new_mode
+                newmodes[i,j] = new_mode
         self._modes = np.concatenate((self._modes, newmodes), axis=1)
-        self._nmodes += 1
+        self._nmodes *= 2
 
     def get_modes(self):
         return self._modes

@@ -13,11 +13,11 @@ meanfield_iters = 150
 batch_size = 50
 n_epoch = 500
 learning_rate = 0.05
-n_modes = 0
-
+n_modes = 3
+print('loading dataset')
 with open(sys.argv[1],'rb') as f:
     dataset_X, dataset_Y = pickle.load(f)
-
+print('Dataset loaded')
 n_samples,_,_,_ = dataset_X.shape
 
 g = 3
@@ -45,7 +45,7 @@ if len(sys.argv) >= 4:
 
 
 m = mf.MeanField(n, n, p)
-
+print('meanfield initialized')
 def expand(dataset):
     n_samples,_,_,_ = dataset.shape
     target = np.zeros((n_samples,n,n,p))
@@ -60,17 +60,10 @@ def grid_to_clip(grid):
     res = np.zeros((n_samples,2,n,n,p))
     for s in range(n_samples):
         res[s] = m.theta_clip_nothing()
-        for x in range(n):
-            for y in range(n):
-                for k in range(p):
-                    if grid[s,x,y,k] == 1:
-                        res[s,1,x,y,k] = -50
+    res[:,1,:,:,:] = np.where(grid == 1, -50, res[:,1,:,:,:])
     return res
 
-with open(sys.argv[1],'rb') as f:
-    dataset_X, dataset_Y = pickle.load(f)
-#n_samples,_,_,_ = dataset_Y.shape
-
+print('preprocessing data')
 
 if pad_zeros:
     inputs = grid_to_clip(expand(dataset_X))
@@ -81,7 +74,7 @@ elif not zero_val:
 else:
     inputs = grid_to_clip(dataset_X)
     labels = dataset_Y
-
+print('preprocessed data')
 print(dataset_X.shape)
 
 
@@ -128,7 +121,7 @@ update_rate = learning_rate*batch_size/float(n_samples)
 update_weights = tf.assign(links, tf.check_numerics(links + update_rate*gradient_total[0],"weights_upd"))
 update_unary = tf.assign(unary, tf.check_numerics(unary + update_rate*gradient_total[1],"unary_upt"))
 update_annealing = tf.assign(annealing, tf.check_numerics(annealing + update_rate*gradient_total[2],"annealing_upd"))
-
+print('tf graph is built')
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 
