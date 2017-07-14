@@ -24,6 +24,7 @@ parser.add_argument('--lr', type=float, default=0.05)
 parser.add_argument('--bs', type=int, default=50)
 parser.add_argument('--nepoch', type=int, default=50)
 parser.add_argument('--annealing', default=False, action='store_true')
+parser.add_argument('--old', default=False, action='store_true')
 args = parser.parse_args()
 print('Starting experiment!')
 print('Board size:',args.boardSz)
@@ -36,7 +37,7 @@ print('Learning rate:',args.lr)
 print('Batch size:', args.bs)
 print('Number of epochs:', args.nepoch)
 print('Annealing:', args.annealing)
-
+print('Using old loss:', args.old)
 pad_zeros = True
 zero_val = True
 
@@ -123,52 +124,67 @@ annealing = tf.Variable(tf.convert_to_tensor(annealing_np))
 
 mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary, tf.exp(annealing), meanfield_iters)
 
-q_mf = tf.nn.softmax(-mmmf._theta_mf[-1]) #  sample, each mode, q values.
-# tf_sample: (s, n, n, p)
-# q_mf: (s*m, n, n, p)
-q_mf = tf.reshape(q_mf, (batch_size,-1,n,n,p))
+with tf.name_scope('computing_q'):
+    q_mf = tf.nn.softmax(-mmmf._theta_mf[-1]) #  sample, each mode, q values.
+    # tf_sample: (s, n, n, p)
+    # q_mf: (s*m, n, n, p)
+    q_mf = tf.reshape(q_mf, (batch_size,-1,n,n,p))
+    # q_mf: (s,m,n,n,p)
+with tf.name_scope('count'):
+    number_of_modes = tf.shape(q_mf)[1]
+    number_of_samples = tf.shape(tf_samples)[0]
 
-# q_mf: (s,m,n,n,p)
+with tf.name_scope('log_likelihood'):
+    tf_samples_stack = tf.tile(tf.expand_dims(tf_samples, 1), [1, number_of_modes, 1, 1, 1], name="tf_samples_stack") # of shape s, m, n, n, p
+    prod = tf_samples_stack*q_mf # broadcast magic -> s,m,n,n,p
+    # => log_lh: (s, m)
+    log_lh_samples = tf.reduce_sum(tf.log(tf.reduce_sum(prod,4)+0.0000001), (2,3), name="log_lh_samples")
+    #log likelihood for each sample each mode.
+    sample_mode = tf.argmax(log_lh_samples, axis=1, name="sample_mode")
+    # shape is [number_of_samples]
+    log_lh = tf.reduce_max(log_lh_samples, axis=1, name="log_lh")
 
-number_of_modes = tf.shape(q_mf)[1]
-number_of_samples = tf.shape(tf_samples)[0]
-tf_samples_stack = tf.tile(tf.expand_dims(tf_samples, 1), [1, number_of_modes, 1, 1, 1]) # of shape s, m, n, n, p
-prod = tf_samples_stack*q_mf # broadcast magic -> s,m,n,n,p
+with tf.name_scope('energy'):
+    energies = mmmf.get_modes_energy()
+    modes_prob = mmmf.get_modes_probability()
+    mean_energy = tf.reduce_sum(energies*tf.stop_gradient(modes_prob), name="mean_energy",axis=1)
+    energy_sample_mode_gathered = tf.gather(tf.transpose(energies), sample_mode, name="energy_sample_mode_gathered")
+    energy_sample_mode = tf.reduce_sum(energy_sample_mode_gathered*tf.eye(batch_size), axis=0, name="energy_sample_mode")
 
-# => log_lh: (s, m)
-log_lh_samples = tf.reduce_sum(tf.log(tf.reduce_sum(prod,4)+0.0000001), (2,3))
-#log likelihood for each sample each mode.
-sample_mode = tf.argmax(log_lh_samples, axis=1)
-# shape is [number_of_samples]
-log_lh = tf.reduce_max(log_lh_samples, axis=1)
+with tf.name_scope('loss_function'):
+    to_maximize_old = tf.reduce_mean(log_lh - energy_sample_mode + mean_energy,name="old_loss")
+    mean_log_lh = tf.reduce_mean(log_lh,name="mean_log_lh")
+    log_prob_sample_mode_gathered = tf.gather(tf.transpose(modes_prob), sample_mode, name="log_prob_sample_mode_gathered")
+    log_prob_sample_mode = tf.reduce_sum(log_prob_sample_mode_gathered*tf.eye(batch_size), axis=0, name="log_prob_sample_mode")
+    to_maximize = tf.reduce_mean(log_lh + log_prob_sample_mode,name="loss")
+    if args.old:
+        to_maximize, to_maximize_old = to_maximize_old, to_maximize
 
-# sum of
-energies = mmmf.get_modes_energy()
-modes_prob = mmmf.get_modes_probability()
-mean_energy = tf.reduce_sum(energies*tf.stop_gradient(modes_prob), axis=1)
-energy_sample_mode = tf.gather(tf.transpose(energies), sample_mode)
 
-#to_maximize = tf.reduce_mean(log_lh - energy_sample_mode + mean_energy)
-log_sum_exp = tf.reduce_logsumexp(modes_prob)
-to_maximize = tf.reduce_mean(log_lh - energy_sample_mode + log_sum_exp)
+with tf.name_scope('gradient'):
+    gradient_total = tf.gradients(to_maximize, [links, unary, annealing], name="gradient")
+    gradient_total_old = tf.gradients(to_maximize_old, [links, unary, annealing], name="old_gradient")
+    c = m.weights_clip_nothing()
+    gradient_total[0] = tf.clip_by_value(gradient_total[0], c[0], c[1])
+    gradient_norm = tf.reduce_sum(tf.abs(gradient_total[0])) + tf.reduce_sum(tf.abs(gradient_total[1])) + tf.reduce_sum(tf.abs(gradient_total[2]))
 
-mean_log_lh = tf.reduce_mean(log_lh)
-gradient_total = tf.gradients(to_maximize, [links, unary, annealing])
-c = m.weights_clip_nothing()
-gradient_total[0] = tf.clip_by_value(gradient_total[0], c[0], c[1])
-gradient_norm = tf.reduce_sum(tf.abs(gradient_total[0])) + tf.reduce_sum(tf.abs(gradient_total[1])) + tf.reduce_sum(tf.abs(gradient_total[2]))
+with tf.name_scope('update'):
+    update_rate = learning_rate*batch_size/float(n_samples)
 
-update_rate = learning_rate*batch_size/float(n_samples)
-
-update_weights = tf.assign(links, tf.check_numerics(links + update_rate*gradient_total[0],"weights_upd"))
-update_unary = tf.assign(unary, tf.check_numerics(unary + update_rate*gradient_total[1],"unary_upt"))
-if args.annealing:
-    update_annealing = tf.assign(annealing, tf.check_numerics(annealing + update_rate*gradient_total[2],"annealing_upd"))
-else:
-    update_annealing = tf.assign(annealing, annealing)
+    update_weights = tf.assign(links, tf.check_numerics(links + update_rate*gradient_total[0],"weights_upd"))
+    update_unary = tf.assign(unary, tf.check_numerics(unary + update_rate*gradient_total[1],"unary_upt"))
+    if args.annealing:
+        update_annealing = tf.assign(annealing, tf.check_numerics(annealing + update_rate*gradient_total[2],"annealing_upd"))
+    else:
+        update_annealing = tf.assign(annealing, annealing)
 print('tf graph is built')
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
+
+writer = tf.summary.FileWriter(logdir='output_summary', graph=tf.get_default_graph())
+writer.flush()
+
+print('tf graph saved')
 
 sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())
@@ -186,7 +202,7 @@ for i in tqdm(range(n_epoch),desc='epoch'):
                     mmmf._T: 1,
                     tf_samples: labels[b*batch_size:(b+1)*batch_size]
                 }
-        loglh,loss,gradient,w,u,a = sess.run([mean_log_lh,to_maximize, gradient_norm, update_weights, update_unary, update_annealing], feed_dict=parameters)
+        _,_,loglh,loss,gradient,w,u,a = sess.run([gradient_total,gradient_total_old,mean_log_lh,to_maximize, gradient_norm, update_weights, update_unary, update_annealing], feed_dict=parameters)
         evol[0].append(loglh)
         evol[1].append(gradient)
         evol[2].append(loss)
