@@ -88,11 +88,11 @@ print(sudoku.infer_grid(sudoku.reduce_matrix(q_,g,p)))
 
 
 sess.close()
-
+n_iter = 300
 n_modes = 11
 weights = tf.convert_to_tensor(w, dtype=tf.float32)
 unary = tf.convert_to_tensor(u, dtype=tf.float32)
-mmmf = mf.BatchedMultiModalMeanField(n,n,p,1,weights,unary,a,n_iter,damping=0.5)
+mmmf = mf.BatchedMultiModalMeanField(n,n,p,1,weights,unary,np.ones([n_iter]),n_iter,damping=0.5)
 mmmf.reset_all(np.array([clip]))
 sess = tf.Session()
 for _ in range(n_modes):

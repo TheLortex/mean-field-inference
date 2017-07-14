@@ -69,24 +69,25 @@ class MeanField():
         # MF-inference loop unroll
         self._weights = weights
         self._unary = unary
-        theta = self._theta
-
-        with tf.name_scope('mf_loop') as scope:
+        self._theta_mf = []
+        with tf.name_scope('mf_inference'):
             for i in range(n_iter):
-                new_theta = self.__update_rule(weights[i], unary[i], theta, damping)
-                theta = tf.clip_by_value(
+                with tf.name_scope('mf_loop') as scope:
+                    theta = self._theta_mf[-1] if len(self._theta_mf) > 0 else self._theta
+                    new_theta = self.__update_rule(weights[i], unary[i], theta, damping)
+                    self._theta_mf.append(tf.clip_by_value(
                             new_theta, 
                             self._theta_clip[:,0],
-                            self._theta_clip[:,1])
-            self._theta_mf = theta
-            q = tf.nn.softmax(-self._theta_mf)
-            tf.summary.histogram('q',q)
-            with tf.name_scope('energy'):
-                E = self.__compute_circular_convolution(q, self._weights[0])
-                self._energy = tf.reduce_sum((E+self._unary[0])*q,axis=(1,2,3)) 
-                tf.summary.histogram('energy',self._energy)        
+                            self._theta_clip[:,1]))
 
-        return self._theta_mf, self._energy, self._theta_clip
+        q = tf.nn.softmax(-self._theta_mf[-1])
+        tf.summary.histogram('q',q)
+        with tf.name_scope('energy'):
+            E = self.__compute_circular_convolution(q, self._weights[0])
+            self._energy = tf.reduce_sum((E+self._unary[0])*q,axis=(1,2,3)) 
+            tf.summary.histogram('energy',self._energy)        
+
+        return tf.stack(self._theta_mf), self._energy, self._theta_clip
 
     def get_energy (self):
         return self._energy
@@ -124,8 +125,8 @@ class MultiModalMeanField():
 
         self._mf = MeanField(n, m, p)
         self._theta_mf, self._energy, self._theta_clip = self._mf.build_model(self._links/self._T, self._unary/self._T, n_iter, damping)
-        self._modes_probabilities = tf.nn.softmax(self._energy)
-        self._q_mf = tf.nn.softmax(-self._theta_mf)
+        self._modes_probabilities = tf.nn.softmax(-self._energy)
+        self._q_mf = tf.nn.softmax(-self._theta_mf[-1])
         self._modes = [self._mf.theta_clip_nothing()]
         self._modesT = [0]
 
@@ -205,8 +206,8 @@ class BatchedMultiModalMeanField():
         self._mf = MeanField(n, m, p)
         self._theta_mf, energy, self._theta_clip = self._mf.build_model(self._links/self._T, self._unary/self._T, n_iter, damping)
         self._energy = tf.reshape(energy, (bs, -1))
-        self._modes_probabilities = tf.nn.softmax(self._energy)
-        self._q_mf = tf.nn.softmax(-self._theta_mf)
+        self._modes_probabilities = tf.nn.softmax(-self._energy)
+        self._q_mf = tf.nn.softmax(-self._theta_mf[-1])
         self._modes = np.array([[self._mf.theta_clip_nothing()] for _ in range(bs)])
         self._nmodes = 1
         self._bs = bs
@@ -234,7 +235,6 @@ class BatchedMultiModalMeanField():
         q = np.reshape(sess.run(self._q_mf, feed_dict=parameters),(self._bs,self._nmodes,self._n,self._n,self._p))
         q = np.transpose(q, [2, 3, 4, 0, 1]) 
         entropy0 = -np.sum(q*np.log2(q+0.0000001), axis=2) < 0.3*np.log2(10) # Initial entropy. 
-        assert (np.any(entropy0))
 
         n_iter = 0
         while True:

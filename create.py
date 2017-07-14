@@ -15,6 +15,7 @@ import sys
 from IPython.core import ultratb
 sys.excepthook = ultratb.FormattedTB(mode='Verbose',
      color_scheme='Linux', call_pdb=1)
+import sudoku
 
 def main():
     parser = argparse.ArgumentParser()
@@ -157,7 +158,7 @@ def pluck(puzzle, nKeep=0):
             # this is a pluckable cell!
             puzzle[cell//Nsq][cell%Nsq] = 0 # 0 denotes a blank cell
             cells.discard(cell) # remove from the set of visible cells (pluck it)
-            if row and col and square:
+            if row and col and square and sudoku.n_solutions_grid(puzzle,N) > 1:
                 break
             
             # we don't need to reset "cellsleft" because if a cell was not pluckable

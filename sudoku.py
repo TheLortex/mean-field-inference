@@ -65,26 +65,26 @@ def is_correct(grid,g):
     return np.all(ok_l+ok_c+ok_sq)
     
 
-def values_ok(x,y,grid):
-    ok = set(range(1,5))
-    for exp in range(4):
+def values_ok(x,y,grid,g):
+    ok = set(range(1,g**2+1))
+    for exp in range(g**2):
         ok.discard(grid[x][exp])
         ok.discard(grid[exp][y])
-    sq_x = 2*(x//2)
-    sq_y = 2*(y//2)
-    for px in range(2):
-        for py in range(2):
+    sq_x = g*(x//g)
+    sq_y = g*(y//g)
+    for px in range(g):
+        for py in range(g):
             ok.discard(grid[sq_x+px][sq_y+py])
     return list(ok)
 
-def n_solutions_grid(grid):
-    for x in range(4):
-        for y in range(4):
+def n_solutions_grid(grid,g):
+    for x in range(g**2):
+        for y in range(g**2):
             if grid[x][y] == 0:
                 ns = 0
-                for t in values_ok(x,y,grid):
+                for t in values_ok(x,y,grid,g):
                     grid[x][y] = t
-                    ns += n_solutions_grid(grid)
+                    ns += n_solutions_grid(grid,g)
                 grid[x][y] = 0
                 return ns
     return 1
