@@ -7,7 +7,7 @@ import sys
 import argparse
 from tqdm import tqdm
 import os
-
+import itertools
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 np.set_printoptions(precision=3,suppress=True)
@@ -25,6 +25,7 @@ parser.add_argument('--bs', type=int, default=50)
 parser.add_argument('--nepoch', type=int, default=50)
 parser.add_argument('--annealing', default=False, action='store_true')
 parser.add_argument('--old', default=False, action='store_true')
+parser.add_argument('--invbyperm', default=False, action='store_true')
 args = parser.parse_args()
 print('Starting experiment!')
 print('Board size:',args.boardSz)
@@ -38,6 +39,7 @@ print('Batch size:', args.bs)
 print('Number of epochs:', args.nepoch)
 print('Annealing:', args.annealing)
 print('Using old loss:', args.old)
+print('Invariant by permutation:',args.invbyperm)
 pad_zeros = True
 zero_val = True
 
@@ -120,12 +122,14 @@ tf_samples = tf.placeholder(tf.float32,[None, n, n, p])
 links = tf.Variable(tf.convert_to_tensor(weights_np))
 links_sym = links+tf.transpose(links, [0, 1, 3, 2]) # pairwise weights are symmetric
 unary = tf.Variable(tf.convert_to_tensor(unary_np))
+unary_sym = unary
+
 annealing = tf.Variable(tf.convert_to_tensor(annealing_np))
 
-mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary, tf.exp(annealing), meanfield_iters)
+mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary_sym, tf.exp(annealing), meanfield_iters)
 
 with tf.name_scope('computing_q'):
-    q_mf = tf.nn.softmax(-mmmf._theta_mf[-1]) #  sample, each mode, q values.
+    q_mf = tf.nn.softmax(-mmmf._theta_mf) #  sample, each mode, q values.
     # tf_sample: (s, n, n, p)
     # q_mf: (s*m, n, n, p)
     q_mf = tf.reshape(q_mf, (batch_size,-1,n,n,p))

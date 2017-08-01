@@ -16,6 +16,15 @@ def to_prob(grid,p):
                 prob_grid[x,y,grid[x,y]] = 1
     return prob_grid
 
+def softmax(values):
+    e_x = np.exp(values - np.max(values))
+    return e_x / e_x.sum(axis=-1,keepdims=True)
+
+
+def clip_to_grid(clip):
+    n_samples,_,n,_,p = clip.shape
+    return softmax(-(clip[:,0]+clip[:,1])/2.)
+
 def grid_to_clip(grid):
     n_samples,m,_,p = grid.shape
     clipping = np.zeros((n_samples,2,m,m,p))
@@ -44,7 +53,7 @@ def expand_matrix(dataset,g,p):
     dataset = np.array(dataset)
     n_samples,_,_,_ = dataset.shape
     target = np.zeros((n_samples,2*(g**2),2*(g**2),p))
-    target[:,:,0] = 1
+    target[:,:,:,0] = 1
     for x in range(g):
         for y in range(g):
                 target[:,g*(2*x):g*(2*x+1),g*(2*y):g*(2*y+1)] = dataset[:,g*x:g*(x+1),g*y:g*(y+1)]

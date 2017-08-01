@@ -20,6 +20,8 @@ parser.add_argument('--input', type=str, default='')
 parser.add_argument('--boardSz', type=int, default=2)
 parser.add_argument('--bs', type=int, default=50)
 parser.add_argument('--lognmodes', type=int, default=2)
+parser.add_argument('--explain', default=False, action='store_true')
+parser.add_argument('--n', type=int, default=-1)
 args = parser.parse_args()
 
 with open(args.dataset,'rb') as f:
@@ -32,7 +34,7 @@ g = args.boardSz
 n = 2*(g**2)
 p = 1+g**2
 
-n_samples = len(dataset_X)
+n_samples = len(dataset_X) if args.n == -1 else args.n
 batch_size = args.bs
 n_modes = args.lognmodes
 
@@ -54,8 +56,10 @@ sess.run(tf.global_variables_initializer())
 n_correct = 0
 n_correct_mul = 0
 n_correct_one = 0
+n_correct_tot = 0
 n_mul = 0
 n_one = 0
+n_tot = 0
 
 success_mul = []
 success_one = []
@@ -72,21 +76,32 @@ for b in range(n_samples/batch_size):
         mmmf._T: 1.
         }
     q_values = np.reshape(sess.run(q_mf, feed_dict=parameters),(batch_size,-1,n,n,p))
-    for q_modes, grid_input in zip(q_values, dataset_X[b*batch_size:(b+1)*batch_size]):
+    for modes_clip, q_modes, grid_input in zip(mmmf._modes, q_values, dataset_X[b*batch_size:(b+1)*batch_size]):
         ok = False
         res = []
-        for q_mode in q_modes:
+        if args.explain:
+            print("###")
+            print(sudoku.infer_grid(grid_input))
+        for q_mode, clip_grid in zip(q_modes, sudoku.clip_to_grid(modes_clip)):
             grid = sudoku.infer_grid(sudoku.reduce_matrix(q_mode,g,p))
             res.append(q_mode)
+            if args.explain:
+                print("##")
+                print(sudoku.infer_grid(sudoku.reduce_matrix(clip_grid,g,p)))
+                print(grid)
+                print("##")
             if sudoku.is_correct(grid,g):
                 ok = True
-                break
+                n_correct_tot += 1
 
+        n_sol = sudoku.n_solutions_grid(sudoku.infer_grid(grid_input),g)
         is_one = False#sudoku.n_solutions_grid(sudoku.infer_grid(grid_input),g) == 1
         if is_one:
             n_one += 1
         else:
             n_mul += 1
+
+        n_tot += n_sol
 
         res = np.array(res)
         if ok:
@@ -104,7 +119,7 @@ for b in range(n_samples/batch_size):
             else:
                 failure_mul.append((grid_input,res))
 
-    print('{}/{} | S: {}/{} | M: {}/{}                   '.format(n_correct,batch_size*(b+1),n_correct_one,n_one,n_correct_mul,n_mul),end='\r')
+    print('{}/{} | S: {}/{} | M: {}/{} | T: {}/{}                  '.format(n_correct,batch_size*(b+1),n_correct_one,n_one,n_correct_mul,n_mul,n_correct_tot,n_tot),end='\r')
     sys.stdout.flush()
 print()
 with open('_success_one.pkl','wb') as f:

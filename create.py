@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--boardSz', type=int, default=2)
     parser.add_argument('--nSamples', type=int, default=10000)
     parser.add_argument('--data', type=str, default='data')
+    parser.add_argument('--nSol', type=int, default=2)
     args = parser.parse_args()
 
     npr.seed(0)
@@ -41,14 +42,14 @@ def main():
     X = np.array(X)
     Y = np.array(Y)
 
-    with open('dataset.pkl','wb') as f:
+    with open(args.data,'wb') as f:
         pickle.dump((X,Y), f)
 
 def sample(args):
     solution = construct_puzzle_solution(args.boardSz)
     Nsq = args.boardSz*args.boardSz
     nKeep = npr.randint(0, Nsq)
-    board, nKept = pluck(copy.deepcopy(solution), nKeep)
+    board, nKept = pluck(copy.deepcopy(solution), nKeep, args.nSol)
     solution = toOneHot(solution)
     board = toOneHot(board)
     return board, solution
@@ -96,7 +97,7 @@ def construct_puzzle_solution(N):
             # if there is an IndexError, we have worked ourselves in a corner (we just start over)
             pass
 
-def pluck(puzzle, nKeep=0):
+def pluck(puzzle, nKeep=0, nSol=2):
     """
     Randomly pluck out K cells (numbers) from the solved puzzle grid, ensuring that any
     plucked number can still be deduced from the remaining cells.
@@ -158,7 +159,7 @@ def pluck(puzzle, nKeep=0):
             # this is a pluckable cell!
             puzzle[cell//Nsq][cell%Nsq] = 0 # 0 denotes a blank cell
             cells.discard(cell) # remove from the set of visible cells (pluck it)
-            if row and col and square and sudoku.n_solutions_grid(puzzle,N) > 1:
+            if row and col and square and sudoku.n_solutions_grid(puzzle,N) >= nSol:
                 break
             
             # we don't need to reset "cellsleft" because if a cell was not pluckable
