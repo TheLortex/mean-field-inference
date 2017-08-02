@@ -146,7 +146,7 @@ class MeanField():
 
 
 class MultiModalMeanField():
-    def __init__(self, n, m, p, links, unary, annealing, n_iter, damping=0.5):
+    def __init__(self, n, m, p, links, unary, annealing, n_iter, damping=0.5, k=1, h=0, FNN=(0,0,0,1)):
         for _ in range(4):
             annealing = tf.expand_dims(annealing)
         annealing = tf.tile(annealing, [1, n, m, p, p])
@@ -154,8 +154,8 @@ class MultiModalMeanField():
         self._unary     = tf.stack(n_iter*[unary])*annealing
         self._T         = tf.placeholder(tf.float32,name="Temperature")
 
-        self._mf = MeanField(n, m, p)
-        self._theta_mf, self._energy, self._theta_clip = self._mf.build_model(self._links/self._T, self._unary/self._T, n_iter, damping)
+        self._mf = MeanField(n, m, p, k, h)
+        self._theta_mf, self._energy, self._theta_clip = self._mf.build_model(self._links/self._T, self._unary/self._T, n_iter, damping, FNN)
         self._modes_probabilities = tf.nn.softmax(-self._energy)
         self._q_mf = tf.nn.softmax(-self._theta_mf)
         self._modes = [self._mf.theta_clip_nothing()]
@@ -226,7 +226,7 @@ class MultiModalMeanField():
 
 
 class BatchedMultiModalMeanField():
-    def __init__(self, n, m, p, bs, links, unary, annealing, n_iter, damping=0.5):
+    def __init__(self, n, m, p, bs, links, unary, annealing, n_iter, damping=0.5, k=1, h=0, FNN=(0,0,0,1)):
         
         self._links     = tf.transpose(tf.stack(n_iter*[links],-1)*annealing, [4,0,1,2,3])
         self._unary     = tf.transpose(tf.stack(n_iter*[unary],-1)*annealing, [3,0,1,2])
@@ -234,8 +234,8 @@ class BatchedMultiModalMeanField():
         print(links.shape)
         self._T         = tf.placeholder(tf.float32,name="Temperature")
 
-        self._mf = MeanField(n, m, p)
-        self._theta_mf, energy, self._theta_clip = self._mf.build_model(self._links/self._T, self._unary/self._T, n_iter, damping)
+        self._mf = MeanField(n, m, p, k, h)
+        self._theta_mf, energy, self._theta_clip = self._mf.build_model(self._links/self._T, self._unary/self._T, n_iter, damping, FNN)
         self._energy = tf.reshape(energy, (bs, -1))
         self._modes_probabilities = tf.nn.softmax(-self._energy)
         self._q_mf = tf.nn.softmax(-self._theta_mf)
