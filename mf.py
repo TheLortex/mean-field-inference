@@ -63,7 +63,7 @@ class MeanField():
             res = d*theta_star + (1-d)*theta
         return res
 
-    def build_model (self, weights, unary, n_iter, FNN=(0,0,0,1), damping=0.05):
+    def build_model (self, weights, unary, n_iter, damping=0.05, FNN=(0,0,0,1)):
         # weights of shape (k,n,n,p,p)
         # unary of shape (n,n,p)
         # FNN (filter neural network) of shape ((2*n,h), (h), (h,k), (k))
@@ -84,8 +84,8 @@ class MeanField():
         #assert (shape_w[1] == n == shape_u[1])
         #assert (shape_w[2] == m == shape_u[2])
         #assert (shape_w[3] == shape_w[4] == p == shape_u[3])
-        
-        L1, L1b, L2, L2b = FNN
+        print(FNN) 
+        (L1, L1b, L2, L2b) = FNN
 
         x_one_hot = tf.expand_dims(tf.eye(self._n), axis=1) # of shape (n,1,n) 
         x_one_hot = tf.tile(x_one_hot, [1, self._n, 1]) # of shape (n,n,n) 1st dim is taken into account
@@ -93,12 +93,12 @@ class MeanField():
         y_one_hot = tf.tile(y_one_hot, [self._n, 1, 1]) # of shape (n,n,n) 2nd dim is taken into account
 
         result = tf.concat([x_one_hot, y_one_hot], 2) # of shape (n,n,2n) - x then y coordinate encoding.
-        
-        hidden_layer = tf.nn.relu(tf.matmul(result,L1)+L1b) # of shape (n,n,h)
-        filter_selection = tf.nn.softmax(tf.matmul(hidden_layer,L2)+L2b) # of shape (n,n,k) i.e. filter 
-                                                                         # composition for each coordinate, 
-                                                                         # allowing the definition of more complex CRFs.
-        
+        if self._h > 0: 
+            hidden_layer = tf.nn.relu(tf.matmul(result,L1)+L1b)              # of shape (n,n,h)
+            filter_selection = tf.nn.softmax(tf.matmul(hidden_layer,L2)+L2b) # of shape (n,n,k) i.e. filter 
+                                                                             # composition for each coordinate, 
+        else:                                                                # allowing the definition of more complex CRFs.
+            filter_selection = tf.nn.softmax(tf.zeros((self._n,self._n,self._k))+L2b)
 
         # MF-inference loop unroll
         self._weights = weights
