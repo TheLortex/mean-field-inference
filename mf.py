@@ -5,16 +5,21 @@ import tensorflow as tf
 class MeanField():
     # Input: 
     #  -n,m,p: n*m picture, random variable space of size p. 
+    #  -k: number of filters
+    #  -h: hidden layer for filter selection.
     #  -n_iter: number of iterations during the learning phase. 
-    #  -weights: Tensor of shape (n,m,p,p) convolutional energy between points
+    #  -weights: Tensor of shape (k,n,m,p,p) convolutional energy between points defined for k filters
     #  -unary: Tensor of shape (n,m,p) unary terms of pixels. 
+
     #  These Tensors can be of shape (n_iter,n,m,..), this way they define the 
     #  values at each iteration.
     
-    def __init__ (self, n, m, p, theta_std=0.1):    
+    def __init__ (self, n, m, p, k=1, h=0, theta_std=0.1):    
         self._n     = n
         self._m     = m
         self._p     = p
+        self._k     = k
+        self._h     = h
         with tf.name_scope('theta'):
             self._theta_clip = tf.placeholder(tf.float32, shape=[None, 2, n, m, p], name="theta_clip")
             self._theta = tf.random_normal(tf.shape(self._theta_clip[:,0,:,:,:], name="theta_shape"), stddev=theta_std, name="initial_theta")
@@ -46,7 +51,10 @@ class MeanField():
             res = d*theta_star + (1-d)*theta
         return res
 
-    def build_model (self, weights, unary, n_iter, damping=0.05):
+    def build_model (self, weights, unary, n_iter, FNN=(None,None,None,np.ones((1))), damping=0.05):
+        # weights of shape (k,n,n,p,p)
+        # unary of shape (n,n,p)
+        # FNN (filter neural network) of shape ((2*n,h), (h), (h,k), (k))
         #shape_w = tf.shape(weights)
         #shape_u = tf.shape(unary)
                                                                           
@@ -64,6 +72,13 @@ class MeanField():
         #assert (shape_w[1] == n == shape_u[1])
         #assert (shape_w[2] == m == shape_u[2])
         #assert (shape_w[3] == shape_w[4] == p == shape_u[3])
+        
+        x_one_hot = tf.expand_dims(tf.eye(self._n), axis=1) # of shape (n,1,n) 
+        x_one_hot = tf.tile(x_one_hot, [1, self._n, 1]) # of shape (n,n,n) 1st dim is taken into account
+        y_one_hot = tf.expand_dims(tf.eye(self._n), axis=0)
+        y_one_hot = tf.tile(y_one_hot, [self._n, 1, 1]) # of shape (n,n,n) 2nd dim is taken into account
+
+        result = tf.concat([x_one_hot, y_one_hot], 2) # of shape (n,n,2n) - x then y coordinate encoding.
         
 
         # MF-inference loop unroll
