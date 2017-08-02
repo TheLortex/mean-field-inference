@@ -38,20 +38,32 @@ class MeanField():
             return tf.nn.conv2d(image_3, filtr, strides, padding)
 
     # takes theta of shape (bs, n, m, p)
-    def __compute_theta_star(self, links, unary, theta):
-        with tf.name_scope('theta_star'):
-            q = tf.nn.softmax(-theta)
-            E = self.__compute_circular_convolution(q, links)
-            return E + unary
+    def __compute_theta_star(self, links, unary, theta, filter_selection):
+        with tf.name_scope('theta_star'): 
+            # links is of shape (k,n,n,p,p)
+            # should have shape (n,n,p,k*p)
+            links_reshaped = tf.reshape(links, (self._n, self._n, self._p, self._k*self._p)) # hoping the magic works
+            
+            q = tf.nn.softmax(-theta) # (bs,n,n,p)
+            E_reshaped = self.__compute_circular_convolution(q, links_reshaped) # (bs,n,n,k*p)
+            E_per_filter = tf.reshape(E_reshaped, (self._k, -1, self._n, self._n, self._p)) # of shape (k,bs,n,n,p)
 
-    def __update_rule(self, links, unary, theta, d):
+            #filter selection is of shape (n,n,k)
+            filter_sel_transposed = tf.transpose(filter_selection, perm=[2,0,1]) # of shape (k,n,n)
+            filter_sel_prepared = tf.expand_dims(filter_sel_transposed, axis=1)
+            filter_sel_prepared = tf.expand_dims(filter_sel_prepared, axis=-1) # of shape (k,1,n,n,1), ready for broadcasting. 
+            E_selected = E_per_filter*filter_sel_prepared
+
+            return tf.reduce_sum(E_selected, axis=0) + unary
+
+    def __update_rule(self, links, unary, theta, d, filter_selection):
         assert (0 < d < 1)
         with tf.name_scope('update') as scope:
-            theta_star = self.__compute_theta_star(links, unary, theta)
+            theta_star = self.__compute_theta_star(links, unary, theta, filter_selection)
             res = d*theta_star + (1-d)*theta
         return res
 
-    def build_model (self, weights, unary, n_iter, FNN=(None,None,None,np.ones((1))), damping=0.05):
+    def build_model (self, weights, unary, n_iter, FNN=(0,0,0,1), damping=0.05):
         # weights of shape (k,n,n,p,p)
         # unary of shape (n,n,p)
         # FNN (filter neural network) of shape ((2*n,h), (h), (h,k), (k))
@@ -73,12 +85,19 @@ class MeanField():
         #assert (shape_w[2] == m == shape_u[2])
         #assert (shape_w[3] == shape_w[4] == p == shape_u[3])
         
+        L1, L1b, L2, L2b = FNN
+
         x_one_hot = tf.expand_dims(tf.eye(self._n), axis=1) # of shape (n,1,n) 
         x_one_hot = tf.tile(x_one_hot, [1, self._n, 1]) # of shape (n,n,n) 1st dim is taken into account
         y_one_hot = tf.expand_dims(tf.eye(self._n), axis=0)
         y_one_hot = tf.tile(y_one_hot, [self._n, 1, 1]) # of shape (n,n,n) 2nd dim is taken into account
 
         result = tf.concat([x_one_hot, y_one_hot], 2) # of shape (n,n,2n) - x then y coordinate encoding.
+        
+        hidden_layer = tf.nn.relu(tf.matmul(result,L1)+L1b) # of shape (n,n,h)
+        filter_selection = tf.nn.softmax(tf.matmul(hidden_layer,L2)+L2b) # of shape (n,n,k) i.e. filter 
+                                                                         # composition for each coordinate, 
+                                                                         # allowing the definition of more complex CRFs.
         
 
         # MF-inference loop unroll
@@ -88,7 +107,7 @@ class MeanField():
         with tf.name_scope('mf_inference'):
             for i in range(n_iter):
                 with tf.name_scope('mf_loop') as scope:
-                    new_theta = self.__update_rule(weights[i], unary[i], self._theta_mf, damping)
+                    new_theta = self.__update_rule(weights[i], unary[i], self._theta_mf, damping, filter_selection)
                     self._theta_mf = tf.clip_by_value(
                                     new_theta, 
                                     self._theta_clip[:,0],
