@@ -1,4 +1,5 @@
 from __future__ import print_function
+from __future__ import division
 import numpy as np
 import tensorflow as tf
 import mf 
@@ -12,6 +13,7 @@ import itertools
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 np.set_printoptions(precision=3,suppress=True)
 
+version = 2.0
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--boardSz', type=int, default=2)
@@ -26,6 +28,8 @@ parser.add_argument('--nepoch', type=int, default=50)
 parser.add_argument('--annealing', default=False, action='store_true')
 parser.add_argument('--old', default=False, action='store_true')
 parser.add_argument('--invbyperm', default=False, action='store_true')
+parser.add_argument('--k', type=int, default=1)
+parser.add_argument('--h', type=int, default=0)
 args = parser.parse_args()
 print('Starting experiment!')
 print('Board size:',args.boardSz)
@@ -40,6 +44,10 @@ print('Number of epochs:', args.nepoch)
 print('Annealing:', args.annealing)
 print('Using old loss:', args.old)
 print('Invariant by permutation:',args.invbyperm)
+print('k:',args.k)
+print('h:',args.h)
+k = args.k
+h = args.h
 pad_zeros = True
 zero_val = True
 
@@ -65,10 +73,12 @@ if pad_zeros:
     n *= 2
 
 
-weights_np = np.zeros((n,n,p,p),dtype=np.float32)
-unary_np = np.zeros((n,n,p),dtype=np.float32)
+weights_np = np.random.normal(0,np.sqrt(2/(n*n)),size=(k,n,n,p,p))
+weights_np[:,0,0,:,:] = 0
+unary_np = np.random.normal(0,np.sqrt(2/(n*n)),size=(n,n,p))
 annealing_np = None
 
+# TODO: Fix preload for new version.
 if args.input != '':
     with open(args.input,'rb') as f:
         weights_np, unary_np, annealing_np = pickle.load(f)
@@ -78,7 +88,7 @@ if args.input != '':
         print(annealing_np)
         print("Loaded from file")
         assert meanfield_iters == annealing_np.shape[0]
-        assert weights_np.shape == (n,n,p,p)
+        assert weights_np.shape == (k,n,n,p,p)
         assert unary_np.shape == (n,n,p)
 
 if annealing_np is None:
@@ -119,14 +129,20 @@ print(dataset_X.shape)
 
 
 tf_samples = tf.placeholder(tf.float32,[None, n, n, p])
-links = tf.Variable(tf.convert_to_tensor(weights_np))
-links_sym = links+tf.transpose(links, [0, 1, 3, 2]) # pairwise weights are symmetric
-unary = tf.Variable(tf.convert_to_tensor(unary_np))
+links = tf.Variable(tf.convert_to_tensor(weights_np, dtype=tf.float32))
+links_sym = links+tf.transpose(links, [0, 1, 2, 4, 3]) # pairwise weights are symmetric
+unary = tf.Variable(tf.convert_to_tensor(unary_np, dtype=tf.float32))
 unary_sym = unary
+annealing = tf.Variable(tf.convert_to_tensor(annealing_np, dtype=tf.float32))
 
-annealing = tf.Variable(tf.convert_to_tensor(annealing_np))
 
-mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary_sym, tf.exp(annealing), meanfield_iters)
+L1      = tf.Variable(tf.random_normal((2*n,h), stddev=np.sqrt(1/n)))
+L1_b    = tf.Variable(tf.random_normal([h], stddev=np.sqrt(1/n)))
+L2      = tf.Variable(tf.random_normal((h,k), stddev=np.sqrt(2/(h+1))))
+L2_b    = tf.Variable(tf.random_normal([k], stddev=np.sqrt(2/(h+1))))
+FNN = (L1, L1_b, L2, L2_b)
+
+mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary_sym, tf.exp(annealing), meanfield_iters, k=k, h=h, FNN=FNN)
 
 with tf.name_scope('computing_q'):
     q_mf = tf.nn.softmax(-mmmf._theta_mf) #  sample, each mode, q values.
@@ -164,23 +180,28 @@ with tf.name_scope('loss_function'):
     if args.old:
         to_maximize, to_maximize_old = to_maximize_old, to_maximize
 
+variables = [links, unary]
+if args.annealing:
+    variables.append(annealing)
+if h > 0:
+    variables.extend([L1, L1_b, L2, L2_b])
 
 with tf.name_scope('gradient'):
-    gradient_total = tf.gradients(to_maximize, [links, unary, annealing], name="gradient")
-    gradient_total_old = tf.gradients(to_maximize_old, [links, unary, annealing], name="old_gradient")
-    c = m.weights_clip_nothing()
+    gradient_total = tf.gradients(to_maximize, variables, name="gradient")
+    gradient_total_old = tf.gradients(to_maximize_old, variables, name="old_gradient")
+    c = np.tile(np.expand_dims(m.weights_clip_nothing(), 1), [1, k, 1, 1, 1, 1])
+
     gradient_total[0] = tf.clip_by_value(gradient_total[0], c[0], c[1])
-    gradient_norm = tf.reduce_sum(tf.abs(gradient_total[0])) + tf.reduce_sum(tf.abs(gradient_total[1])) + tf.reduce_sum(tf.abs(gradient_total[2]))
+    gradient_norm = sum([tf.reduce_sum(tf.abs(gradient_total[i])) for i in range(len(gradient_total))])
 
 with tf.name_scope('update'):
     update_rate = learning_rate*batch_size/float(n_samples)
 
-    update_weights = tf.assign(links, tf.check_numerics(links + update_rate*gradient_total[0],"weights_upd"))
-    update_unary = tf.assign(unary, tf.check_numerics(unary + update_rate*gradient_total[1],"unary_upt"))
-    if args.annealing:
-        update_annealing = tf.assign(annealing, tf.check_numerics(annealing + update_rate*gradient_total[2],"annealing_upd"))
-    else:
-        update_annealing = tf.assign(annealing, annealing)
+    updates = []
+    for idx, elem in enumerate(variables):
+        print(idx, elem)
+        updates.append(tf.assign(elem, tf.check_numerics(elem + update_rate*gradient_total[idx],"gradient_check_{}".format(idx)),name="update_{}".format(idx)))
+
 print('tf graph is built')
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
@@ -194,8 +215,9 @@ sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())
 
 evol = [[],[],[]]
+
 for i in tqdm(range(n_epoch),desc='epoch'):
-    for b in tqdm(range(n_samples/batch_size),desc='batch'):
+    for b in tqdm(range(n_samples//batch_size),desc='batch'):
         #print(np.expand_dims(np.array(inputs[b*batch_size:(b+1)*batch_size]),axis=1).shape)
         mmmf.reset_all(np.expand_dims(np.array(inputs[b*batch_size:(b+1)*batch_size]),axis=1))
         for _ in range(n_modes): 
@@ -206,14 +228,19 @@ for i in tqdm(range(n_epoch),desc='epoch'):
                     mmmf._T: 1,
                     tf_samples: labels[b*batch_size:(b+1)*batch_size]
                 }
-        _,_,loglh,loss,gradient,w,u,a = sess.run([gradient_total,gradient_total_old,mean_log_lh,to_maximize, gradient_norm, update_weights, update_unary, update_annealing], feed_dict=parameters)
+
+        loglh,loss,gradient,_ = sess.run([mean_log_lh,to_maximize, gradient_norm, updates], feed_dict=parameters)
         evol[0].append(loglh)
         evol[1].append(gradient)
         evol[2].append(loss)
         
         
     with open(args.out,'wb') as f:
-        pickle.dump(sess.run([links, unary, annealing]), f)
+        data = {}
+        data['links'], data['unary'], data['annealing'], data['FNN'] = sess.run([links, unary, annealing, FNN])
+        data['args'] = args
+        data['version'] = version
+        pickle.dump(data, f)
     with open(args.out+'.lrn','wb') as f:
         pickle.dump(evol,f)
 print('done')

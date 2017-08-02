@@ -37,6 +37,9 @@ class MeanField():
             padding = "VALID"
             return tf.nn.conv2d(image_3, filtr, strides, padding)
 
+
+
+
     # takes theta of shape (bs, n, m, p)
     def __compute_theta_star(self, links, unary, theta, filter_selection):
         with tf.name_scope('theta_star'): 
@@ -94,8 +97,10 @@ class MeanField():
 
         result = tf.concat([x_one_hot, y_one_hot], 2) # of shape (n,n,2n) - x then y coordinate encoding.
         if self._h > 0: 
-            hidden_layer = tf.nn.relu(tf.matmul(result,L1)+L1b)              # of shape (n,n,h)
-            filter_selection = tf.nn.softmax(tf.matmul(hidden_layer,L2)+L2b) # of shape (n,n,k) i.e. filter 
+            tmp = tf.tensordot(result,L1,1)
+            hidden_layer = tf.nn.relu(tmp+L1b)                               # of shape (n,n,h)
+            tmp = tf.tensordot(hidden_layer,L2,1) 
+            filter_selection = tf.nn.softmax(tmp+L2b) # of shape (n,n,k) i.e. filter 
                                                                              # composition for each coordinate, 
         else:                                                                # allowing the definition of more complex CRFs.
             filter_selection = tf.nn.softmax(tf.zeros((self._n,self._n,self._k))+L2b)
@@ -115,8 +120,23 @@ class MeanField():
 
         q = tf.nn.softmax(-self._theta_mf)
         with tf.name_scope('energy'):
-            E = self.__compute_circular_convolution(q, self._weights[0])
-            self._energy = tf.reduce_sum((E+self._unary[0])*q,axis=(1,2,3)) 
+            #E = self.__compute_circular_convolution(q, self._weights[0])
+            #self._energy = tf.reduce_sum((E+self._unary[0])*q,axis=(1,2,3)) 
+            links_reshaped = tf.reshape(self._weights[0], (self._n, self._n, self._p, self._k*self._p)) # hoping the magic works
+            
+            E_reshaped = self.__compute_circular_convolution(q, links_reshaped) # (bs,n,n,k*p)
+            E_per_filter = tf.reshape(E_reshaped, (self._k, -1, self._n, self._n, self._p)) # of shape (k,bs,n,n,p)
+
+            #filter selection is of shape (n,n,k)
+            filter_sel_transposed = tf.transpose(filter_selection, perm=[2,0,1]) # of shape (k,n,n)
+            filter_sel_prepared = tf.expand_dims(filter_sel_transposed, axis=1)
+            filter_sel_prepared = tf.expand_dims(filter_sel_prepared, axis=-1) # of shape (k,1,n,n,1), ready for broadcasting. 
+            E_selected = E_per_filter*filter_sel_prepared
+            print("E SHAPE", E_selected.shape)
+            print("UNARY SHAPE", unary.shape)
+            print("Q shape",q.shape)
+            self._energy = tf.reduce_sum((tf.reduce_sum(E_selected, axis=0) + self._unary[0])*q, axis=(1,2,3))
+
 
         return self._theta_mf, self._energy, self._theta_clip
 
@@ -227,11 +247,21 @@ class MultiModalMeanField():
 
 class BatchedMultiModalMeanField():
     def __init__(self, n, m, p, bs, links, unary, annealing, n_iter, damping=0.5, k=1, h=0, FNN=(0,0,0,1)):
-        
-        self._links     = tf.transpose(tf.stack(n_iter*[links],-1)*annealing, [4,0,1,2,3])
-        self._unary     = tf.transpose(tf.stack(n_iter*[unary],-1)*annealing, [3,0,1,2])
+       
+        # links is of shape k, n, n, p, p
+        # needs to add annealing dimension. 
+        ann = annealing
+        for _ in range(3):
+            ann = tf.expand_dims(ann, -1)
+        ann_unary = ann                     # of shape (n_iter, 1, 1, 1)
+        for _ in range(2):
+            ann = tf.expand_dims(ann, -1)
+        ann_links = ann                     # of shape (n_iter, 1, 1, 1, 1, 1)
+        self._links     = ann_links*tf.tile(tf.expand_dims(links, 0), [n_iter, 1, 1, 1, 1, 1])
+        self._unary     = ann_unary*tf.tile(tf.expand_dims(unary, 0), [n_iter, 1, 1, 1])
         print(self._links.shape)
         print(links.shape)
+        
         self._T         = tf.placeholder(tf.float32,name="Temperature")
 
         self._mf = MeanField(n, m, p, k, h)

@@ -27,8 +27,12 @@ args = parser.parse_args()
 with open(args.dataset,'rb') as f:
     dataset_X, dataset_Y = pickle.load(f)
 
+# todo: be backward compatible. (old format = weights, unary, annealing, new format = dictionnary)
+
 with open(args.input,'rb') as f:
-    w, u, a = pickle.load(f)
+    model_data = pickle.load(f)
+print(model_data['args'])
+print("Version:",model_data['version'])
 
 g = args.boardSz
 n = 2*(g**2)
@@ -40,11 +44,19 @@ n_modes = args.lognmodes
 
 inputs = sudoku.grid_to_clip(sudoku.expand_matrix(dataset_X,g,p))
 
+w = model_data['links']
+u = model_data['unary']
+a = model_data['annealing']
+
+FNN = model_data['FNN']
+_,_,L2,_ = FNN
+h,k = L2.shape
+
 links = tf.Variable(tf.convert_to_tensor(w))
-links_sym = links+tf.transpose(links, [0, 1, 3, 2])
+links_sym = links+tf.transpose(links, [0, 1, 2, 4, 3])
 unary = tf.Variable(tf.convert_to_tensor(u))
 
-mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary, np.exp(a), a.shape[0])
+mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary, np.exp(a), a.shape[0], k=k, h=h, FNN=FNN)
 q_mf = mmmf.get_q_mf_values()
 
 
