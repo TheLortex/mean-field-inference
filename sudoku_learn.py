@@ -2,7 +2,7 @@ from __future__ import print_function
 from __future__ import division
 import numpy as np
 import tensorflow as tf
-import mf 
+import mf
 import pickle
 import sys
 import argparse
@@ -73,9 +73,11 @@ if pad_zeros:
     n *= 2
 
 
-weights_np = np.random.normal(0,np.sqrt(2/(n*n)),size=(k,n,n,p,p))
-weights_np[:,0,0,:,:] = 0
-unary_np = np.random.normal(0,np.sqrt(2/(n*n)),size=(n,n,p))
+#weights_np = np.random.normal(0,np.sqrt(2/(n*n)),size=(k,n,n,p,p))
+#weights_np[:,0,0,:,:] = 0
+#unary_np = np.random.normal(0,np.sqrt(2/(n*n)),size=(n,n,p))
+weights_np = np.zeros((k,n,n,p,p))
+unary_np = np.zeros((n,n,p))
 annealing_np = None
 
 # TODO: Fix preload for new version.
@@ -129,17 +131,17 @@ print(dataset_X.shape)
 
 
 tf_samples = tf.placeholder(tf.float32,[None, n, n, p])
-links = tf.Variable(tf.convert_to_tensor(weights_np, dtype=tf.float32))
+links = tf.Variable(tf.convert_to_tensor(weights_np, dtype=tf.float32),name="links")
 links_sym = links+tf.transpose(links, [0, 1, 2, 4, 3]) # pairwise weights are symmetric
-unary = tf.Variable(tf.convert_to_tensor(unary_np, dtype=tf.float32))
+unary = tf.Variable(tf.convert_to_tensor(unary_np, dtype=tf.float32),name="unary")
 unary_sym = unary
-annealing = tf.Variable(tf.convert_to_tensor(annealing_np, dtype=tf.float32))
+annealing = tf.Variable(tf.convert_to_tensor(annealing_np, dtype=tf.float32),name="annealing")
 
 
-L1      = tf.Variable(tf.random_normal((2*n,h), stddev=np.sqrt(1/n)))
-L1_b    = tf.Variable(tf.random_normal([h], stddev=np.sqrt(1/n)))
-L2      = tf.Variable(tf.random_normal((h,k), stddev=np.sqrt(2/(h+1))))
-L2_b    = tf.Variable(tf.random_normal([k], stddev=np.sqrt(2/(h+1))))
+L1      = tf.Variable(tf.random_normal((2*n,h), stddev=np.sqrt(1/n)),name="L1")
+L1_b    = tf.Variable(tf.random_normal([h], stddev=np.sqrt(1/n)),name="L1_b")
+L2      = tf.Variable(tf.random_normal((h,k), stddev=np.sqrt(2/(h+1))),name="L2")
+L2_b    = tf.Variable(tf.random_normal([k], stddev=np.sqrt(2/(h+1))),name="L2_b")
 FNN = (L1, L1_b, L2, L2_b)
 
 mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary_sym, tf.exp(annealing), meanfield_iters, k=k, h=h, FNN=FNN)
@@ -198,6 +200,7 @@ with tf.name_scope('update'):
     update_rate = learning_rate*batch_size/float(n_samples)
 
     updates = []
+    print("Printing learned variables")
     for idx, elem in enumerate(variables):
         print(idx, elem)
         updates.append(tf.assign(elem, tf.check_numerics(elem + update_rate*gradient_total[idx],"gradient_check_{}".format(idx)),name="update_{}".format(idx)))
@@ -220,7 +223,7 @@ for i in tqdm(range(n_epoch),desc='epoch'):
     for b in tqdm(range(n_samples//batch_size),desc='batch'):
         #print(np.expand_dims(np.array(inputs[b*batch_size:(b+1)*batch_size]),axis=1).shape)
         mmmf.reset_all(np.expand_dims(np.array(inputs[b*batch_size:(b+1)*batch_size]),axis=1))
-        for _ in range(n_modes): 
+        for _ in range(n_modes):
             mmmf.iteration(sess)
 
         parameters = {
@@ -233,8 +236,8 @@ for i in tqdm(range(n_epoch),desc='epoch'):
         evol[0].append(loglh)
         evol[1].append(gradient)
         evol[2].append(loss)
-        
-        
+
+
     with open(args.out,'wb') as f:
         data = {}
         data['links'], data['unary'], data['annealing'], data['FNN'] = sess.run([links, unary, annealing, FNN])
