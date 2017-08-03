@@ -45,12 +45,15 @@ class MeanField():
         with tf.name_scope('theta_star'): 
             # links is of shape (k,n,n,p,p)
             # should have shape (n,n,p,k*p)
-            links_reshaped = tf.reshape(links, (self._n, self._n, self._p, self._k*self._p)) # hoping the magic works
-            
+            links_reshaped = tf.reshape(tf.transpose(links,[1,2,3,4,0]), (self._n, self._n, self._p, self._k*self._p)) # hoping the magic works
+            self._links_reshaped = links_reshaped
             q = tf.nn.softmax(-theta) # (bs,n,n,p)
             E_reshaped = self.__compute_circular_convolution(q, links_reshaped) # (bs,n,n,k*p)
-            E_per_filter = tf.reshape(E_reshaped, (self._k, -1, self._n, self._n, self._p)) # of shape (k,bs,n,n,p)
-
+            self._E_reshaped = E_reshaped
+            self._q = q
+            E_per_filter = tf.reshape(E_reshaped, (-1, self._n, self._n, self._p, self._k)) # of shape (bs,n,n,p,k)
+            E_per_filter = tf.transpose(E_per_filter,[4,0,1,2,3])
+            self._E_per_filter = E_per_filter
             #filter selection is of shape (n,n,k)
             filter_sel_transposed = tf.transpose(filter_selection, perm=[2,0,1]) # of shape (k,n,n)
             filter_sel_prepared = tf.expand_dims(filter_sel_transposed, axis=1)
@@ -98,12 +101,13 @@ class MeanField():
         result = tf.concat([x_one_hot, y_one_hot], 2) # of shape (n,n,2n) - x then y coordinate encoding.
         if self._h > 0: 
             tmp = tf.tensordot(result,L1,1)
-            hidden_layer = tf.nn.relu(tmp+L1b)                               # of shape (n,n,h)
-            tmp = tf.tensordot(hidden_layer,L2,1) 
-            filter_selection = tf.nn.softmax(tmp+L2b) # of shape (n,n,k) i.e. filter 
+            self._hidden_layer = tf.nn.tanh(tmp+L1b)                               # of shape (n,n,h)
+            
+            tmp = tf.tensordot(self._hidden_layer,L2,1) 
+            self._filter_selection = tf.nn.softmax(tmp+L2b) # of shape (n,n,k) i.e. filter 
                                                                              # composition for each coordinate, 
         else:                                                                # allowing the definition of more complex CRFs.
-            filter_selection = tf.nn.softmax(tf.zeros((self._n,self._n,self._k))+L2b)
+            self._filter_selection = tf.nn.softmax(tf.zeros((self._n,self._n,self._k))+L2b)
 
         # MF-inference loop unroll
         self._weights = weights
@@ -112,7 +116,7 @@ class MeanField():
         with tf.name_scope('mf_inference'):
             for i in range(n_iter):
                 with tf.name_scope('mf_loop') as scope:
-                    new_theta = self.__update_rule(weights[i], unary[i], self._theta_mf, damping, filter_selection)
+                    new_theta = self.__update_rule(weights[i], unary[i], self._theta_mf, damping, self._filter_selection)
                     self._theta_mf = tf.clip_by_value(
                                     new_theta, 
                                     self._theta_clip[:,0],
@@ -128,7 +132,7 @@ class MeanField():
             E_per_filter = tf.reshape(E_reshaped, (self._k, -1, self._n, self._n, self._p)) # of shape (k,bs,n,n,p)
 
             #filter selection is of shape (n,n,k)
-            filter_sel_transposed = tf.transpose(filter_selection, perm=[2,0,1]) # of shape (k,n,n)
+            filter_sel_transposed = tf.transpose(self._filter_selection, perm=[2,0,1]) # of shape (k,n,n)
             filter_sel_prepared = tf.expand_dims(filter_sel_transposed, axis=1)
             filter_sel_prepared = tf.expand_dims(filter_sel_prepared, axis=-1) # of shape (k,1,n,n,1), ready for broadcasting. 
             E_selected = E_per_filter*filter_sel_prepared
