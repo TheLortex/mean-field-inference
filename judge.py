@@ -35,7 +35,9 @@ print(model_data['args'])
 print("Version:",model_data['version'])
 
 g = args.boardSz
-n = 2*(g**2)
+n = (g**2)
+if not(model_data['args'].nopad):
+    n *= 2
 p = 1+g**2
 
 n_samples = len(dataset_X) if args.n == -1 else args.n

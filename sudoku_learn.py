@@ -30,6 +30,7 @@ parser.add_argument('--old', default=False, action='store_true')
 parser.add_argument('--invbyperm', default=False, action='store_true')
 parser.add_argument('--k', type=int, default=1)
 parser.add_argument('--h', type=int, default=0)
+parser.add_argument('--nopad', default=False, action='store_true')
 args = parser.parse_args()
 print('Starting experiment!')
 print('Board size:',args.boardSz)
@@ -46,9 +47,10 @@ print('Using old loss:', args.old)
 print('Invariant by permutation:',args.invbyperm)
 print('k:',args.k)
 print('h:',args.h)
+print('padding:',not(args.nopad))
 k = args.k
 h = args.h
-pad_zeros = True
+pad_zeros = not(args.nopad)
 zero_val = True
 
 meanfield_iters = args.mfiter
