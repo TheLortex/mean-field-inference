@@ -48,6 +48,7 @@ print('Invariant by permutation:',args.invbyperm)
 print('k:',args.k)
 print('h:',args.h)
 print('padding:',not(args.nopad))
+
 k = args.k
 h = args.h
 pad_zeros = not(args.nopad)
@@ -81,11 +82,17 @@ if pad_zeros:
 weights_np = np.zeros((k,n,n,p,p))
 unary_np = np.zeros((n,n,p))
 annealing_np = None
+FNN_np = None
 
 # TODO: Fix preload for new version.
 if args.input != '':
     with open(args.input,'rb') as f:
-        weights_np, unary_np, annealing_np = pickle.load(f)
+        model = pickle.load(f)
+        weights_np = model['links']
+        unary_np = model['unary']
+        annealing_np = model['annealing']
+
+        FNN_np = model['FNN']
         print("Loaded from file")
         print(weights_np)
         print(unary_np)
@@ -140,11 +147,16 @@ unary_sym = unary
 annealing = tf.Variable(tf.convert_to_tensor(annealing_np, dtype=tf.float32),name="annealing")
 
 
-L1      = tf.Variable(tf.random_normal((2*n,h), stddev=np.sqrt(1/n)),name="L1")
-L1_b    = tf.Variable(tf.random_normal([h], stddev=np.sqrt(1/n)),name="L1_b")
-L2      = tf.Variable(tf.random_normal((h,k), stddev=np.sqrt(2/(h+1))),name="L2")
-L2_b    = tf.Variable(tf.random_normal([k], stddev=np.sqrt(2/(h+1))),name="L2_b")
-FNN = (L1, L1_b, L2, L2_b)
+L1      = tf.random_normal((2*n,h), stddev=np.sqrt(1/n))
+L1_b    = tf.random_normal([h], stddev=np.sqrt(1/n))
+L2      = tf.random_normal((h,k), stddev=np.sqrt(2/(h+1)))
+L2_b    = tf.random_normal([k], stddev=np.sqrt(2/(h+1)))
+
+if not(FNN_np is None):
+    L1, L1_b, L2, L2_b = FNN_np
+
+FNN = (tf.Variable(L1,name="L1"), tf.Variable(L1_b,name="L1_b"), tf.Variable(L2,name="L2"), tf.Variable(L2_b,name="L2_b"))
+L1, L1_b, L2, L2_b = FNN
 
 mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary_sym, tf.exp(annealing), meanfield_iters, k=k, h=h, FNN=FNN)
 
@@ -192,7 +204,7 @@ if h > 0:
 
 with tf.name_scope('gradient'):
     gradient_total = tf.gradients(to_maximize, variables, name="gradient")
-    gradient_total_old = tf.gradients(to_maximize_old, variables, name="old_gradient")
+#    gradient_total_old = tf.gradients(to_maximize_old, variables, name="old_gradient")
     c = np.tile(np.expand_dims(m.weights_clip_nothing(), 1), [1, k, 1, 1, 1, 1])
 
     gradient_total[0] = tf.clip_by_value(gradient_total[0], c[0], c[1])
@@ -206,6 +218,9 @@ with tf.name_scope('update'):
     for idx, elem in enumerate(variables):
         print(idx, elem)
         updates.append(tf.assign(elem, tf.check_numerics(elem + update_rate*gradient_total[idx],"gradient_check_{}".format(idx)),name="update_{}".format(idx)))
+
+train_op = tf.train.AdamOptimizer().minimize(-to_maximize, var_list=variables)
+
 
 print('tf graph is built')
 config = tf.ConfigProto()
@@ -234,7 +249,9 @@ for i in tqdm(range(n_epoch),desc='epoch'):
                     tf_samples: labels[b*batch_size:(b+1)*batch_size]
                 }
 
-        loglh,loss,gradient,_ = sess.run([mean_log_lh,to_maximize, gradient_norm, updates], feed_dict=parameters)
+        operations = [mean_log_lh,to_maximize,gradient_norm]
+        operations.append(train_op)
+        loglh,loss,gradient,_ = sess.run(operations, feed_dict=parameters)
         evol[0].append(loglh)
         evol[1].append(gradient)
         evol[2].append(loss)
