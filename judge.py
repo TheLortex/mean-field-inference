@@ -34,9 +34,11 @@ with open(args.input,'rb') as f:
 print(model_data['args'])
 print("Version:",model_data['version'])
 
+zeropad = not(model_data['args'].nopad)
+
 g = args.boardSz
 n = (g**2)
-if not(model_data['args'].nopad):
+if zeropad:
     n *= 2
 p = 1+g**2
 
@@ -44,8 +46,10 @@ n_samples = len(dataset_X) if args.n == -1 else args.n
 batch_size = args.bs
 n_modes = args.lognmodes
 
-inputs = sudoku.grid_to_clip(sudoku.expand_matrix(dataset_X,g,p))
-
+if zeropad:
+    inputs = sudoku.grid_to_clip(sudoku.expand_matrix(dataset_X,g,p))
+else:
+    inputs = sudoku.grid_to_clip(dataset_X)
 w = model_data['links']
 u = model_data['unary']
 a = model_data['annealing']
@@ -97,11 +101,11 @@ for b in range(n_samples/batch_size):
             print("###")
             print(sudoku.infer_grid(grid_input))
         for q_mode, clip_grid in zip(q_modes, sudoku.clip_to_grid(modes_clip)):
-            grid = sudoku.infer_grid(sudoku.reduce_matrix(q_mode,g,p))
+            grid = sudoku.infer_grid(sudoku.reduce_matrix(q_mode,g,p) if zeropad else q_mode)
             res.append(q_mode)
             if args.explain:
                 print("##")
-                print(sudoku.infer_grid(sudoku.reduce_matrix(clip_grid,g,p)))
+                print(sudoku.infer_grid(sudoku.reduce_matrix(clip_grid,g,p) if zeropad else clip_grid))
                 print(grid)
                 print("##")
             if sudoku.is_correct(grid,g):
