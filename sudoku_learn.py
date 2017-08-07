@@ -13,7 +13,7 @@ import itertools
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 np.set_printoptions(precision=3,suppress=True)
 
-version = 2.0
+version = 2.4
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--boardSz', type=int, default=2)
@@ -22,7 +22,7 @@ parser.add_argument('--out', type=str, default='latest.pkl')
 parser.add_argument('--input', type=str, default='')
 parser.add_argument('--lognmodes', type=int, default=0)
 parser.add_argument('--mfiter', type=int, default=50)
-parser.add_argument('--lr', type=float, default=0.05)
+parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--bs', type=int, default=50)
 parser.add_argument('--nepoch', type=int, default=50)
 parser.add_argument('--annealing', default=False, action='store_true')
@@ -31,6 +31,8 @@ parser.add_argument('--invbyperm', default=False, action='store_true')
 parser.add_argument('--k', type=int, default=1)
 parser.add_argument('--h', type=int, default=0)
 parser.add_argument('--nopad', default=False, action='store_true')
+parser.add_argument('--decay', type=int, default=5)
+
 args = parser.parse_args()
 print('Starting experiment!')
 print('Board size:',args.boardSz)
@@ -48,7 +50,7 @@ print('Invariant by permutation:',args.invbyperm)
 print('k:',args.k)
 print('h:',args.h)
 print('padding:',not(args.nopad))
-
+print('decay:', args.decay)
 k = args.k
 h = args.h
 pad_zeros = not(args.nopad)
@@ -219,7 +221,11 @@ with tf.name_scope('update'):
         print(idx, elem)
         updates.append(tf.assign(elem, tf.check_numerics(elem + update_rate*gradient_total[idx],"gradient_check_{}".format(idx)),name="update_{}".format(idx)))
 
-train_op = tf.train.AdamOptimizer().minimize(-to_maximize, var_list=variables)
+
+step = tf.Variable(0, trainable=False)
+rate = args.lr*tf.pow(0.7,tf.cast(tf.div(step, (n_samples//batch_size)*args.decay), tf.float32)) # decrease learning rate every 5 epoch
+
+train_op = tf.train.AdamOptimizer(rate).minimize(-to_maximize, global_step=step, var_list=variables)
 
 
 print('tf graph is built')
