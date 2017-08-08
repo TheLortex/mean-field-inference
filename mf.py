@@ -101,7 +101,7 @@ class MeanField():
         result = tf.concat([x_one_hot, y_one_hot], 2) # of shape (n,n,2n) - x then y coordinate encoding.
         if self._h > 0: 
             tmp = tf.tensordot(result,L1,1)
-            self._hidden_layer = tf.nn.tanh(tmp+L1b)                               # of shape (n,n,h)
+            self._hidden_layer = tf.nn.elu(tmp+L1b)                               # of shape (n,n,h)
             
             tmp = tf.tensordot(self._hidden_layer,L2,1) 
             self._filter_selection = tf.nn.softmax(tmp+L2b) # of shape (n,n,k) i.e. filter 
