@@ -9,6 +9,7 @@ import argparse
 from tqdm import tqdm
 import os
 import itertools
+import setproctitle
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 np.set_printoptions(precision=3,suppress=True)
@@ -34,6 +35,10 @@ parser.add_argument('--nopad', default=False, action='store_true')
 parser.add_argument('--decay', type=int, default=5)
 
 args = parser.parse_args()
+
+setproctitle.setproctitle('sudoku_learning {} -> {}'.format(args.dataset, args.out))
+
+
 print('Starting experiment!')
 print('Board size:',args.boardSz)
 print('Dataset:',args.dataset)
