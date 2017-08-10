@@ -14,7 +14,7 @@ import setproctitle
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 np.set_printoptions(precision=3,suppress=True)
 
-version = 2.4
+version = 2.5
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--boardSz', type=int, default=2)
@@ -237,10 +237,10 @@ print('tf graph is built')
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 
-writer = tf.summary.FileWriter(logdir='output_summary', graph=tf.get_default_graph())
-writer.flush()
+#writer = tf.summary.FileWriter(logdir='output_summary', graph=tf.get_default_graph())
+#writer.flush()
 
-print('tf graph saved')
+#print('tf graph saved')
 
 sess = tf.Session(config=config)
 sess.run(tf.global_variables_initializer())

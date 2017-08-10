@@ -1,30 +1,37 @@
 import numpy as np
 import itertools
 
+# Given a probability grid, returns the MAP assignment grid. 
+# Assumes the probability distribution is on the last dimension.
 def infer_grid(prob_grid):
-    return np.argmax(prob_grid, axis=2)
+    return np.argmax(prob_grid, axis=-1)
 
+# Given a probability grid, returns the maximum probability for each position.
+# Assumes the probability distribution is on the last dimension.
 def infer_grid_probabilities(prob_grid):
-    return np.max(prob_grid, axis=2)
+    return np.max(prob_grid, axis=-1)
 
+# Gives the one-hot encoding of a m*n integer matrix. 
 def to_prob(grid,p):
-    m,_ = grid.shape
-    prob_grid = np.zeros((m,m,p))
+    m,n = grid.shape
+    prob_grid = np.zeros((m,n,p))
     for x in range(m):
-        for y in range(m):
+        for y in range(n):
             if grid[x,y] != 0:
                 prob_grid[x,y,grid[x,y]] = 1
     return prob_grid
 
+# Softmax activation function.
 def softmax(values):
     e_x = np.exp(values - np.max(values))
     return e_x / e_x.sum(axis=-1,keepdims=True)
 
-
+# Converts a variable clipping to the probability distribution of the grid. 
 def clip_to_grid(clip):
     n_samples,_,n,_,p = clip.shape
     return softmax(-(clip[:,0]+clip[:,1])/2.)
 
+# Converts a probability grid to the corresponding variable clipping. 
 def grid_to_clip(grid):
     n_samples,m,_,p = grid.shape
     clipping = np.zeros((n_samples,2,m,m,p))
