@@ -1,6 +1,7 @@
+from __future__ import print_function
+
 import numpy as np
 import tensorflow as tf 
-
 # A Mean Field inference layer with a fixed number of iterations. 
 class MeanField():
     # Input: 
@@ -20,11 +21,7 @@ class MeanField():
         self._p     = p
         self._k     = k
         self._h     = h
-        with tf.name_scope('theta'):
-            self._theta_clip = tf.placeholder(tf.float32, shape=[None, 2, n, m, p], name="theta_clip")
-            self._theta = tf.random_normal(tf.shape(self._theta_clip[:,0,:,:,:], name="theta_shape"), stddev=theta_std, name="initial_theta")
-
-    # image shape (bs, n, m, p) | filter shape (n, m, p, p)
+            # image shape (bs, n, m, p) | filter shape (n, m, p, p)
     # outputs convolution of shape (bs, n, m, p)
     def __compute_circular_convolution (self, image, filtr):
         with tf.name_scope('convolution'):
@@ -69,7 +66,7 @@ class MeanField():
             res = d*theta_star + (1-d)*theta
         return res
 
-    def build_model (self, weights, unary, n_iter, damping=0.05, FNN=(0,0,0,1)):
+    def build_model (self, weights, unary, n_iter, damping=0.05, FNN=(0,0,0,1), placeholder=None):
         # weights of shape (k,n,n,p,p)
         # unary of shape (n,n,p)
         # FNN (filter neural network) of shape ((2*n,h), (h), (h,k), (k))
@@ -90,8 +87,15 @@ class MeanField():
         #assert (shape_w[1] == n == shape_u[1])
         #assert (shape_w[2] == m == shape_u[2])
         #assert (shape_w[3] == shape_w[4] == p == shape_u[3])
-        print(FNN) 
         (L1, L1b, L2, L2b) = FNN
+
+
+        if placeholder is None:
+            placeholder = tf.placeholder(tf.float32, shape=[None, 2, self._n, self._m, self._p], name="theta_clip")
+        self._theta_clip = placeholder
+        with tf.name_scope('theta'):
+            self._theta = tf.random_normal(tf.shape(self._theta_clip[:,0,:,:,:], name="theta_shape"), stddev=0.1, name="initial_theta")
+
 
         x_one_hot = tf.expand_dims(tf.eye(self._n), axis=1) # of shape (n,1,n) 
         x_one_hot = tf.tile(x_one_hot, [1, self._n, 1]) # of shape (n,n,n) 1st dim is taken into account
@@ -101,7 +105,7 @@ class MeanField():
         result = tf.concat([x_one_hot, y_one_hot], 2) # of shape (n,n,2n) - x then y coordinate encoding.
         if self._h > 0: 
             tmp = tf.tensordot(result,L1,1)
-            self._hidden_layer = tf.nn.elu(tmp+L1b)                               # of shape (n,n,h)
+            self._hidden_layer = tf.nn.tanh(tmp+L1b)                               # of shape (n,n,h)
             
             tmp = tf.tensordot(self._hidden_layer,L2,1) 
             self._filter_selection = tf.nn.softmax(tmp+L2b) # of shape (n,n,k) i.e. filter 
@@ -136,9 +140,6 @@ class MeanField():
             filter_sel_prepared = tf.expand_dims(filter_sel_transposed, axis=1)
             filter_sel_prepared = tf.expand_dims(filter_sel_prepared, axis=-1) # of shape (k,1,n,n,1), ready for broadcasting. 
             E_selected = E_per_filter*filter_sel_prepared
-            print("E SHAPE", E_selected.shape)
-            print("UNARY SHAPE", unary.shape)
-            print("Q shape",q.shape)
             self._energy = tf.reduce_sum((tf.reduce_sum(E_selected, axis=0) + self._unary[0])*q, axis=(1,2,3))
 
 
@@ -168,87 +169,6 @@ class MeanField():
 
 
 
-
-class MultiModalMeanField():
-    def __init__(self, n, m, p, links, unary, annealing, n_iter, damping=0.5, k=1, h=0, FNN=(0,0,0,1)):
-        for _ in range(4):
-            annealing = tf.expand_dims(annealing)
-        annealing = tf.tile(annealing, [1, n, m, p, p])
-        self._links     = tf.stack(n_iter*[links])*annealing
-        self._unary     = tf.stack(n_iter*[unary])*annealing
-        self._T         = tf.placeholder(tf.float32,name="Temperature")
-
-        self._mf = MeanField(n, m, p, k, h)
-        self._theta_mf, self._energy, self._theta_clip = self._mf.build_model(self._links/self._T, self._unary/self._T, n_iter, damping, FNN)
-        self._modes_probabilities = tf.nn.softmax(-self._energy)
-        self._q_mf = tf.nn.softmax(-self._theta_mf)
-        self._modes = [self._mf.theta_clip_nothing()]
-        self._modesT = [0]
-
-    def reset_all(self, initial_modes=None):
-        if initial_modes is None:
-            initial_modes = [self._mf.theta_clip_nothing()]
-        self._modes = initial_modes
-        self._modesT = [0]
-
-    def find_phase_transition(self, sess, T):
-        parameters = {
-                        self._theta_clip: np.array(self._modes),
-                        self._T: T
-                    }
-        q = sess.run(self._q_mf, feed_dict=parameters)
-        entropy0 = -np.sum(q*np.log2(q+0.0000001), axis=3)
-        zerosure = entropy0 < 0.3*np.log2(10) # TODO: 10 -> scale
-        while True:
-            T *= 1.2
-            parameters = {
-                            self._theta_clip: np.array(self._modes),
-                            self._T: T
-                         }
-            q = sess.run(self._q_mf, feed_dict=parameters)
-            entropy = -np.sum(q*np.log2(q+0.0000001), axis=3)
-
-            chk = np.logical_and(entropy > 0.7*np.log2(10), zerosure)
-            if np.any(chk):
-                return q, chk, T
-
-    def iteration(self, session):
-        q, chk, T = self.find_phase_transition(session, 1/10.)
-        
-        idx = np.argmax(chk)
-        m,x,y = np.unravel_index(idx, chk.shape)
-        k = np.argmax(q[m,x,y])
-        print(m,x,y,k,T,q[m,x,y])
-
-
-        self._modesT[m] = T
-        self._modesT.append(T)
-
-        cur_mode        = self._modes[m]
-        new_mode        = cur_mode.copy()
-
-        cur_mode[0,x,y,k] = -50
-        cur_mode[1,x,y,k] = -50
-
-        new_mode[0,x,y,k] =  50
-        new_mode[1,x,y,k] =  50
-
-        self._modes.append(new_mode)
-        return True, q[m,x,y,k]
-
-    def get_modes(self):
-        return self._modes
-
-    def get_q_mf_values(self):
-        return self._q_mf
-
-    def get_modes_probability(self):
-        return self._modes_probabilities
-
-    def get_modes_energy(self):
-        return self._energy
-
-
 class BatchedMultiModalMeanField():
     def __init__(self, n, m, p, bs, links, unary, annealing, n_iter, damping=0.5, k=1, h=0, FNN=(0,0,0,1)):
        
@@ -263,8 +183,6 @@ class BatchedMultiModalMeanField():
         ann_links = ann                     # of shape (n_iter, 1, 1, 1, 1, 1)
         self._links     = ann_links*tf.tile(tf.expand_dims(links, 0), [n_iter, 1, 1, 1, 1, 1])
         self._unary     = ann_unary*tf.tile(tf.expand_dims(unary, 0), [n_iter, 1, 1, 1])
-        print(self._links.shape)
-        print(links.shape)
         
         self._T         = tf.placeholder(tf.float32,name="Temperature")
 
@@ -301,8 +219,7 @@ class BatchedMultiModalMeanField():
         q = np.transpose(q, [2, 3, 4, 0, 1]) 
         unclipped_values = np.all((self._modes[:,:,0] + self._modes[:,:,1]) != -100, axis=-1)
         unclipped_values = np.transpose(unclipped_values, [2,3,0,1])
-        entropy0 = (-np.sum(q*np.log2(q+0.0000001), axis=2)) < 0.3*np.log2(10) # Initial entropy. 
-        #print(np.sum(np.logical_and(entropy0, unclipped_values)))
+        entropy0 = (-np.sum(q*np.log(q+0.0000001), axis=2)) < 0.3*np.log2(self._p) # Initial entropy. 
         n_iter = 0
         while True:
             if not(np.any(unfinished)):
@@ -315,18 +232,18 @@ class BatchedMultiModalMeanField():
             q = np.reshape(sess.run(self._q_mf, feed_dict=parameters),(self._bs,self._nmodes,self._n,self._n,self._p))
             q = np.transpose(q, [2, 3, 4, 0, 1]) #n,n,p,bs,nmodes
 
-            entropy = -np.sum(q*np.log2(q+0.0000001), axis=2) #n,n,bs,nmodes
+            entropy = -np.sum(q*np.log(q+0.0000001), axis=2) #n,n,bs,nmodes
             
 
 
-            phase_transition = np.logical_and(entropy > 0.7*np.log2(10), entropy0) # of shape n,n,bs,nmodes
+            phase_transition = np.logical_and(entropy > 0.7*np.log2(self._p), entropy0) # of shape n,n,bs,nmodes
             has_phase_transition = np.any(phase_transition, axis=(0,1)) # of shape bs,nmodes
             
             should_update = np.logical_and(has_phase_transition, unfinished) # find modes who have their first phase transition
             if np.sum(should_update) == 0:
                 n_iter += 1
                 if n_iter > 20:
-                    # print("too many iterations now stopping at T=",T)
+                    print("too many iterations now stopping at T=",T,'unfinished=',np.sum(unfinished))
                     should_update = unfinished
 
             unfinished = np.logical_xor(should_update, unfinished) # clear bits
@@ -371,5 +288,156 @@ class BatchedMultiModalMeanField():
     def get_modes_energy(self):
         return self._energy
 
+
+
+
+
+class TensorflowizedBatchedMultiModalMeanField():
+    def __init__(self, n, m, p, bs, links, unary, annealing, n_iter, damping=0.5, k=1, h=0, FNN=(0,0,0,1)):
+       
+        # links is of shape k, n, n, p, p
+        # needs to add annealing dimension. 
+        ann = annealing
+        for _ in range(3):
+            ann = tf.expand_dims(ann, -1)
+        ann_unary = ann                     # of shape (n_iter, 1, 1, 1)
+        for _ in range(2):
+            ann = tf.expand_dims(ann, -1)
+        ann_links = ann                     # of shape (n_iter, 1, 1, 1, 1, 1)
+        self._links     = ann_links*tf.tile(tf.expand_dims(links, 0), [n_iter, 1, 1, 1, 1, 1])
+        self._unary     = ann_unary*tf.tile(tf.expand_dims(unary, 0), [n_iter, 1, 1, 1])
+        
+        self._T         = tf.placeholder(tf.float32,name="Temperature")
+
+        self._mf = MeanField(n, m, p, k, h)
+        
+        self._theta_mf, energy, self._theta_clip = self._mf.build_model(self._links/self._T, self._unary/self._T, n_iter, damping, FNN)
+
+        self._energy = tf.reshape(energy, (bs, -1))
+        self._modes_probabilities = tf.nn.softmax(-self._energy)
+        self._q_mf = tf.nn.softmax(-self._theta_mf)
+        #self._modes = np.array([[self._mf.theta_clip_nothing()] for _ in range(bs)])
+        #self._nmodes = 1
+        self._bs = bs
+        self._n = n
+        self._p = p
+        self._n_iter = n_iter
+        self._FNN = FNN
+        self._damping = damping
+    # provide a batched mode list
+    #def reset_all(self, initial_modes=None):
+    #    if initial_modes is None:
+    #        initial_modes = np.array([[self._mf.theta_clip_nothing()] for _ in range(bs)])
+    #    self._modes = initial_modes
+    #    self._nmodes = 1
+
+    def find_phase_transition(self, currentModes, nmodes, T):
+        n_modes_total = nmodes*self._bs
+
+        theta_clip = tf.reshape(currentModes, [nmodes*self._bs,2,self._n,self._n,self._p])
+        theta_mf0, _, _ = self._mf.build_model(self._links/T, self._unary/T, self._n_iter, self._damping, self._FNN, theta_clip)
+
+        q0 = tf.reshape(tf.nn.softmax(-theta_mf0),[self._bs,nmodes,self._n,self._n,self._p])
+        entropy0 = (-tf.reduce_sum(q0*tf.log(q0+0.0000001),axis=4)) < 0.3*tf.log(tf.constant(10.0))
+
+
+        results_q = tf.zeros((self._bs, nmodes, self._n, self._n, self._p))
+        unfinished = tf.convert_to_tensor(np.array([[True]*nmodes for _ in range(self._bs)]), dtype=tf.bool)
+        n_iter = tf.constant(0)
+
+        def cond(unfinished, n_iter, T, results_q):
+            return tf.logical_and(tf.reduce_any(unfinished), tf.less(n_iter,20))
+
+        def body(unfinished, n_iter, T, results_q):
+            theta_mfi, _, _ = self._mf.build_model(self._links/T, self._unary/T, self._n_iter, self._damping, self._FNN, theta_clip)
+            qi = tf.reshape(tf.nn.softmax(-theta_mfi),[self._bs,nmodes,self._n,self._n,self._p])
+            entropyi = -tf.reduce_sum(qi*tf.log(qi+0.0000001), axis=4)
+
+            phase_transition = tf.logical_and(entropy0, tf.greater(entropyi, 0.7*tf.log(tf.constant(10.0)))) # of shape bs,nmodes,n,n
+            has_phase_transition = tf.reduce_any(phase_transition, axis=[2,3]) # of shape bs,nmodes
+            should_update = tf.logical_and(has_phase_transition, unfinished)
+            should_update_n_n = tf.expand_dims(tf.expand_dims(should_update,-1),-1)
+            should_update_n_n_p = tf.expand_dims(should_update_n_n,-1)
+
+
+            n_iter_next = tf.cond(tf.reduce_any(should_update), lambda: n_iter, lambda: tf.add(n_iter,1))
+            T_next = T * 1.2
+            unfinished_next = tf.logical_xor(should_update, unfinished)
+            results_q_next = tf.where(tf.tile(should_update_n_n_p, [1,1,self._n,self._n,self._p]), qi, results_q)
+            
+            return unfinished_next, n_iter_next, T_next, results_q_next
+        # [50,1], [1], [1], [bs,nmodes,n,n,p]
+        _,_,_,q_final = tf.while_loop(cond,body,(unfinished,n_iter,T,results_q))
+        return q_final
+
+    def iteration(self, currentModes, nmodes): 
+        q = self.find_phase_transition(currentModes, nmodes, tf.constant(1/5.))
+        entropy = tf.reduce_sum(q*tf.log(q+0.0000001), axis=4)
+        
+        newmodes = currentModes
+
+        entropy_flattened = tf.reshape(entropy,[self._bs, nmodes, -1])
+        q_flattened = tf.reshape(q,[self._bs, nmodes, -1, self._p])
+
+        max_entropy_pos = tf.argmax(entropy_flattened, axis=2)
+
+        q_selected = tf.gather(tf.transpose(q_flattened,[2,0,1,3]),max_entropy_pos)
+        # of shape bs*nmodes * bs*nmodes*p
+        q_reshaped  = tf.reshape(q_selected,[self._bs*nmodes, self._bs*nmodes, self._p])
+        identity_select = tf.expand_dims(tf.eye(self._bs*nmodes),2)
+        
+        q_flat_maxentropy = tf.reduce_sum(q_reshaped*identity_select,axis=1) # of shape (bs*nmodes,p)
+        q_maxentropy = tf.reshape(q_flat_maxentropy, [self._bs,nmodes,self._p]) # of shape (bs, nmodes)
+        maxq_maxentropy = tf.argmax(q_maxentropy, axis=2) # of shape (bs, nmodes)
+
+        bs_list = tf.expand_dims(tf.cumsum(tf.ones([self._bs],dtype=tf.int64), exclusive=True),1)
+        modes_list = tf.expand_dims(tf.cumsum(tf.ones([nmodes],dtype=tf.int64), exclusive=True),0)
+
+        bs_mtrx = tf.tile(bs_list, [1, nmodes])
+        modes_mtrx = tf.tile(modes_list, [self._bs, 1])
+
+
+
+        n0 = tf.div(max_entropy_pos, self._n)
+        n1 = tf.mod(max_entropy_pos, self._n)
+
+
+        update_coordinates = tf.stack([bs_mtrx, modes_mtrx,n0, n1, maxq_maxentropy], axis=2) # of shape (bs, nmodes, 5)
+
+        ref = currentModes # of shape (bs, nmodes, 2, n, n, p), P = 6
+        indices = update_coordinates # of shape (bs, nmodes, 6) Q = 3
+        # K = P
+        # updates of rank Q-1, shape (bs, nmodes)
+        updates = 100*tf.ones([self._bs, nmodes])
+        
+        modesClamp = tf.scatter_nd(update_coordinates,updates,[self._bs, nmodes, self._n, self._n, self._p])
+        modesClamp = tf.expand_dims(modesClamp, 2)
+        # of shape (bs, nmodes, 1, n, n, p)
+        zeroClamp = tf.zeros([self._bs, nmodes, 1, self._n, self._n, self._p])
+        
+        modesClampMax = tf.concat([zeroClamp, modesClamp], axis=2)
+        modesClampMin = tf.concat([modesClamp, zeroClamp], axis=2)
+        # of shape (bs, nmodes, 2, n, n, p)
+
+        modesClampPlus = currentModes + modesClampMin # set min to 50 for clamped variables
+        modesClampMinus = currentModes - modesClampMax # set max to -50 for clamped variables
+
+        newModes = tf.concat([modesClampPlus, modesClampMinus], axis=1)
+        return newModes     
+
+    def get_energy_values(self):
+        return self._energy
+
+    def get_modes(self):
+        return self._modes
+
+    def get_q_mf_values(self):
+        return self._q_mf
+
+    def get_modes_probability(self):
+        return self._modes_probabilities
+
+    def get_modes_energy(self):
+        return self._energy
 
 

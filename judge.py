@@ -9,6 +9,8 @@ import sudoku
 import argparse
 import os
 import sys
+import setproctitle
+
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -23,6 +25,8 @@ parser.add_argument('--lognmodes', type=int, default=2)
 parser.add_argument('--explain', default=False, action='store_true')
 parser.add_argument('--n', type=int, default=-1)
 args = parser.parse_args()
+
+setproctitle.setproctitle('testing {} on {}'.format(args.input, args.dataset))
 
 with open(args.dataset,'rb') as f:
     dataset_X, dataset_Y = pickle.load(f)
@@ -94,18 +98,20 @@ for b in range(n_samples/batch_size):
         mmmf._T: 1.
         }
     q_values = np.reshape(sess.run(q_mf, feed_dict=parameters),(batch_size,-1,n,n,p))
-    for modes_clip, q_modes, grid_input in zip(mmmf._modes, q_values, dataset_X[b*batch_size:(b+1)*batch_size]):
+    for modes_clip, q_modes, grid_input, grid_output in zip(mmmf._modes, q_values, dataset_X[b*batch_size:(b+1)*batch_size], dataset_Y[b*batch_size:(b+1)*batch_size]):
         ok = False
         res = []
         if args.explain:
             print("###")
             print(sudoku.infer_grid(grid_input))
+            print(sudoku.infer_grid(grid_output))
         for q_mode, clip_grid in zip(q_modes, sudoku.clip_to_grid(modes_clip)):
             grid = sudoku.infer_grid(sudoku.reduce_matrix(q_mode,g,p) if zeropad else q_mode)
             res.append(q_mode)
             if args.explain:
                 print("##")
                 print(sudoku.infer_grid(sudoku.reduce_matrix(clip_grid,g,p) if zeropad else clip_grid))
+                print(np.max(q_mode,axis=-1))
                 print(grid)
                 print("##")
             if sudoku.is_correct(grid,g):
