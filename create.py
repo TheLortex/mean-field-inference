@@ -23,14 +23,12 @@ def main():
     parser.add_argument('--nSamples', type=int, default=10000)
     parser.add_argument('--data', type=str, default='data')
     parser.add_argument('--nSol', type=int, default=2)
+    parser.add_argument('--single', default=False, action='store_true')
     args = parser.parse_args()
 
     npr.seed(0)
 
     save = os.path.join(args.data, str(args.boardSz))
-    if os.path.isdir(save):
-        shutil.rmtree(save)
-    os.makedirs(save)
 
     X = []
     Y = []
@@ -49,7 +47,7 @@ def sample(args):
     solution = construct_puzzle_solution(args.boardSz)
     Nsq = args.boardSz*args.boardSz
     nKeep = npr.randint(0, Nsq)
-    board, nKept = pluck(copy.deepcopy(solution), nKeep, args.nSol)
+    board, nKept = pluck(copy.deepcopy(solution), nKeep, args.nSol, args.single)
     solution = toOneHot(solution)
     board = toOneHot(board)
     return board, solution
@@ -97,7 +95,7 @@ def construct_puzzle_solution(N):
             # if there is an IndexError, we have worked ourselves in a corner (we just start over)
             pass
 
-def pluck(puzzle, nKeep=0, nSol=2):
+def pluck(puzzle, nKeep=0, nSol=2, unique=False):
     """
     Randomly pluck out K cells (numbers) from the solved puzzle grid, ensuring that any
     plucked number can still be deduced from the remaining cells.
@@ -142,7 +140,6 @@ def pluck(puzzle, nKeep=0, nSol=2):
         # group to deduce this value.) If all three groups are True, then we cannot pluck
         # this cell and must try another one.
         row = col = square = False
-        unique = False
 
         for i in range(Nsq):
             if i != cell//Nsq:
