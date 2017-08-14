@@ -142,8 +142,8 @@ def judge(args):
             else:
                 if is_one:
                     failure_one.append((grid_input,res))
-            else:
-                failure_mul.append((grid_input,res))
+                else:
+                    failure_mul.append((grid_input,res))
 
         print('{}/{} | S: {}/{} | M: {}/{} | T: {}/{}                  '.format(n_correct,batch_size*(b+1),n_correct_one,n_one,n_correct_mul,n_mul,n_correct_tot,n_tot),end='\r')
         sys.stdout.flush()
@@ -151,5 +151,5 @@ def judge(args):
     return (n_correct, n_samples, n_correct_tot, n_tot)
 
 
-if __name__ == __main__:
+if __name__ == '__main__':
     judge(args)
