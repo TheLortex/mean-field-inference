@@ -33,7 +33,7 @@ parser.add_argument('--k', type=int, default=1)
 parser.add_argument('--h', type=int, default=0)
 parser.add_argument('--nopad', default=False, action='store_true')
 parser.add_argument('--decay', type=int, default=5)
-
+parser.add_argument('--nprelearn', type=int, default=0)
 args = parser.parse_args()
 
 setproctitle.setproctitle('sudoku_learning {} -> {}'.format(args.dataset, args.out))
@@ -56,6 +56,7 @@ print('k:',args.k)
 print('h:',args.h)
 print('padding:',not(args.nopad))
 print('decay:', args.decay)
+print('pre-learning:', args.nprelearn)
 k = args.k
 h = args.h
 pad_zeros = not(args.nopad)
@@ -165,7 +166,7 @@ if not(FNN_np is None):
 FNN = (tf.Variable(L1,name="L1"), tf.Variable(L1_b,name="L1_b"), tf.Variable(L2,name="L2"), tf.Variable(L2_b,name="L2_b"))
 L1, L1_b, L2, L2_b = FNN
 
-mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary_sym, tf.exp(annealing), meanfield_iters, k=k, h=h, FNN=FNN)
+mmmf = mf.BatchedMultiModalMeanField(n, n, p, batch_size, links_sym, unary_sym, tf.exp(annealing) if args.annealing else None, meanfield_iters, k=k, h=h, FNN=FNN)
 
 with tf.name_scope('computing_q'):
     q_mf = tf.nn.softmax(-mmmf._theta_mf) #  sample, each mode, q values.
@@ -247,12 +248,13 @@ sess.run(tf.global_variables_initializer())
 
 evol = [[],[],[]]
 
-for i in tqdm(range(n_epoch),desc='epoch'):
+for i in tqdm(range(n_epoch+args.nprelearn),desc='epoch'):
     for b in tqdm(range(n_samples//batch_size),desc='batch'):
         #print(np.expand_dims(np.array(inputs[b*batch_size:(b+1)*batch_size]),axis=1).shape)
         mmmf.reset_all(np.expand_dims(np.array(inputs[b*batch_size:(b+1)*batch_size]),axis=1))
-        for _ in range(n_modes):
-            mmmf.iteration(sess)
+        if i >= args.nprelearn:
+            for _ in range(n_modes):
+                mmmf.iteration(sess)
 
         parameters = {
                     mmmf._theta_clip: np.reshape(mmmf._modes,(-1,2,n,n,p)),
