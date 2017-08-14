@@ -174,15 +174,21 @@ class BatchedMultiModalMeanField():
        
         # links is of shape k, n, n, p, p
         # needs to add annealing dimension. 
-        ann = annealing
-        for _ in range(3):
-            ann = tf.expand_dims(ann, -1)
-        ann_unary = ann                     # of shape (n_iter, 1, 1, 1)
-        for _ in range(2):
-            ann = tf.expand_dims(ann, -1)
-        ann_links = ann                     # of shape (n_iter, 1, 1, 1, 1, 1)
-        self._links     = ann_links*tf.tile(tf.expand_dims(links, 0), [n_iter, 1, 1, 1, 1, 1])
-        self._unary     = ann_unary*tf.tile(tf.expand_dims(unary, 0), [n_iter, 1, 1, 1])
+        
+        if annealing is None:
+            self._links = [links]*n_iter
+            self._unary = [unary]*n_iter
+        else:
+            ann = annealing
+            for _ in range(3):
+                ann = tf.expand_dims(ann, -1)
+            ann_unary = ann                     # of shape (n_iter, 1, 1, 1)
+            for _ in range(2):
+                ann = tf.expand_dims(ann, -1)
+            ann_links = ann                     # of shape (n_iter, 1, 1, 1, 1, 1)
+         
+            self._links     = ann_links*tf.tile(tf.expand_dims(links, 0), [n_iter, 1, 1, 1, 1, 1])
+            self._unary     = ann_unary*tf.tile(tf.expand_dims(unary, 0), [n_iter, 1, 1, 1])
         
         self._T         = tf.placeholder(tf.float32,name="Temperature")
 
@@ -219,7 +225,7 @@ class BatchedMultiModalMeanField():
         q = np.transpose(q, [2, 3, 4, 0, 1]) 
         unclipped_values = np.all((self._modes[:,:,0] + self._modes[:,:,1]) != -100, axis=-1)
         unclipped_values = np.transpose(unclipped_values, [2,3,0,1])
-        entropy0 = (-np.sum(q*np.log(q+0.0000001), axis=2)) < 0.3*np.log2(self._p) # Initial entropy. 
+        entropy0 = (-np.sum(q*np.log2(q+0.0000001), axis=2)) < 0.3*np.log2(self._p) # Initial entropy. 
         n_iter = 0
         while True:
             if not(np.any(unfinished)):
@@ -232,7 +238,7 @@ class BatchedMultiModalMeanField():
             q = np.reshape(sess.run(self._q_mf, feed_dict=parameters),(self._bs,self._nmodes,self._n,self._n,self._p))
             q = np.transpose(q, [2, 3, 4, 0, 1]) #n,n,p,bs,nmodes
 
-            entropy = -np.sum(q*np.log(q+0.0000001), axis=2) #n,n,bs,nmodes
+            entropy = -np.sum(q*np.log2(q+0.0000001), axis=2) #n,n,bs,nmodes
             
 
 
