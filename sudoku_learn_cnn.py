@@ -18,6 +18,7 @@ version = 2.5
 parser = argparse.ArgumentParser()
 parser.add_argument('--boardSz', type=int, default=2)
 parser.add_argument('--dataset', type=str, default='')
+parser.add_argument('--test', type=str, default='')
 parser.add_argument('--out', type=str, default='latest.pkl')
 parser.add_argument('--input', type=str, default='')
 parser.add_argument('--lr', type=float, default=0.001)
@@ -32,6 +33,8 @@ setproctitle.setproctitle('sudoku_learning {} -> {}'.format(args.dataset, args.o
 print('loading dataset')
 with open(args.dataset,'rb') as f:
     dataset_X, dataset_Y = pickle.load(f)
+with open(args.test,'rb') as f:
+    test_X, test_Y = pickle.load(f)
 print('Dataset loaded')
 n_samples,_,_,_ = dataset_X.shape
 
@@ -42,6 +45,10 @@ p = g**2
 # remove zeroval
 inputs = dataset_X[:,:,:,1:p+1]
 labels = dataset_Y[:,:,:,1:p+1]
+
+inputs_test = test_X[:,:,:,1:p+1]
+labels_test = test_Y[:,:,:,1:p+1]
+
 tf_samples = tf.placeholder(tf.float32,[args.bs, n, n, p])
 tf_ground_truth = tf.placeholder(tf.float32,[args.bs, n, n, p])
 
@@ -106,8 +113,8 @@ for i in tqdm(range(args.nepoch),desc='epoch'):
     for b in tqdm(range(n_samples//batch_size),desc='batch'):
 
         parameters = {
-                    tf_samples: inputs[b*batch_size:(b+1)*batch_size],
-                    tf_ground_truth: labels[b*batch_size:(b+1)*batch_size]
+                    tf_samples: inputs_test[b*batch_size:(b+1)*batch_size],
+                    tf_ground_truth: labels_test[b*batch_size:(b+1)*batch_size]
                 }
 
         loss_value,_ = sess.run([loss,train_op], feed_dict=parameters)
