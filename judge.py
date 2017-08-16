@@ -16,16 +16,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 np.set_printoptions(precision=3,suppress=True)
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='')
-parser.add_argument('--input', type=str, default='')
-parser.add_argument('--boardSz', type=int, default=2)
-parser.add_argument('--bs', type=int, default=50)
-parser.add_argument('--lognmodes', type=int, default=2)
-parser.add_argument('--explain', default=False, action='store_true')
-parser.add_argument('--n', type=int, default=-1)
-args = parser.parse_args()
-
 
 def judge(args):
     setproctitle.setproctitle('testing {} on {}'.format(args.input, args.dataset))
@@ -152,4 +142,14 @@ def judge(args):
 
 
 if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dataset', type=str, default='')
+    parser.add_argument('--input', type=str, default='')
+    parser.add_argument('--boardSz', type=int, default=2)
+    parser.add_argument('--bs', type=int, default=50)
+    parser.add_argument('--lognmodes', type=int, default=2)
+    parser.add_argument('--explain', default=False, action='store_true')
+    parser.add_argument('--n', type=int, default=-1)
+    args = parser.parse_args()    
     judge(args)
